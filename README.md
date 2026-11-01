@@ -45,3 +45,6 @@ This package supersedes the earlier sizing scripts in the parent `Sails` folder:
 - `transatlantic_trade_sweep.py`, with its CSV and PNG outputs
 
 It also supersedes the "Transatlantic Rig Mockup" artifact's calculations. Their methods are reproduced step by step in the notebook, and the notebook gives the same numbers.
+
+## Archive
+`archive/` holds superseded or reference-only material, not needed to reproduce the baseline: the earlier single-notebook calcs (`transatlantic_sail_pdr_calcs.ipynb`), the first-pass mast/sail sizing note (`mast_sail_sizing_estimate.md`) and the PDR slide deck (`Transatlantic_Sail_PDR.pptx`).

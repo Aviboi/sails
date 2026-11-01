@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+.venv/
+venv/
+
+# ANSYS Fluent runtime logs / transcripts
+fluent-*.trn
+fluent-*.log
+*-error.log
+cleanup-fluent-*
+*.cas.h5.bak
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Claude / graphify local output
+graphify-out/
+.claude/settings.local.json
+
+# Powerpoint files
+*.pptx
