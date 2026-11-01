@@ -4,7 +4,7 @@
 
 This log records every design decision for the transatlantic sail in the order it was made: what was decided, what else was considered, why, what it costs, and what would make us revisit it.
 
-The numbers come from **`2_Calculations.ipynb`** (the current baseline and the trade studies behind it) and **`3_Design_History.ipynb`** (the earlier estimates v0–v5), both in this folder, plus **`4_Section_Design.ipynb`** for the exact plate cross-section (equations S1–S19, sources [L#] in its own Section 11). References like **(NB 6.2)** point to sections of the main notebook, **(E51)** to its numbered equations (NB Part 2), **(H3)** to sections of the history notebook, and tags like [L5] to the reference list (NB Appendix A). Together these files are the complete record.
+The numbers come from **`2_Calculations.py`** (the current baseline and the trade studies behind it) and **`3_Design_History.py`** (the earlier estimates v0–v5), both in this folder, plus **`4_Section_Design.py`** for the exact plate cross-section (equations S1–S19, sources [L#] in its own Section 11). References like **(NB 6.2)** point to sections of the main notebook, **(E51)** to its numbered equations (NB Part 2 index), **(H3)** to sections of the history notebook, and tags like [L5] to the reference list (NB Appendix A). Together these files are the complete record.
 
 ---
 
@@ -23,7 +23,7 @@ The numbers come from **`2_Calculations.ipynb`** (the current baseline and the t
 | D8 | v5 | Size | 0.95 × 0.65 m, 0.62 m², AR 1.46 | Active, final after gearbox check | NB 6.3, 6.4; H3, H5 |
 | D9 | v5 | Drive | Self-locking worm (NMRV050, or NMRV040 + 2:1), geared DC/BLDC on 5 V | Direction set; unit not yet chosen | NB 6.5 |
 | D10 | v5.1 | Construction | E-glass/epoxy faces on a 10 mm PVC-foam core, mast bonded through | Active; verify mass with a sample panel | NB 5.3, 5.8, 6.7; H6 |
-| D11 | v5.2 | Section detail | Plate cross-section: 8 % arc kept; rounded-edge, spine and thickness details provisional pending bench data | Provisional; ranking-grade tool only | `4_Section_Design.ipynb` |
+| D11 | v5.2 | Section detail | Plate cross-section: 8 % arc kept; rounded-edge, spine and thickness details provisional pending bench data | Provisional; ranking-grade tool only | `4_Section_Design.py` |
 
 Findings that are not decisions but steer the design: **F1** sizing levers, **F2** AVS deferred to the hull, **F3** ballast need, **F4** weather-routing assumption.
 
@@ -39,7 +39,7 @@ Findings that are not decisions but steer the design: **F1** sizing levers, **F2
 | — | Trade sweep | Found the drive is the binding constraint (NB 6.3; H5) |
 | v5 | 0.95 × 0.65 m (D8); drive hardware direction (D9) | Fit one worm gearbox size (NB 6.4, 6.5) |
 | v5.1 | Sail construction designed (D10); sail mass itemised, 1.24 → 2.07 kg | The allowance left out the spine, edges, bond lines and paint (NB 5.3; H0, H6) |
-| v5.2 | Section-design notebook (D11): 8 % camber retained; tool limits and a CP discrepancy recorded | Needed a documented method for the exact section (`4_Section_Design.ipynb`) |
+| v5.2 | Section-design notebook (D11): 8 % camber retained; tool limits and a CP discrepancy recorded | Needed a documented method for the exact section (`4_Section_Design.py`) |
 
 ---
 
@@ -167,7 +167,7 @@ The clutch strategy survives only in the foil alternative (NB 6.1).
 ### D11: Plate cross-section detail (v5.2, provisional)
 **Decision.** Keep the 8 % circular-arc section of D6. Take the plate thickness from the D10 layup (10.8 mm: 10 mm core + 2 × 2 plies at an assumed 0.20 mm per cured ply). Round both long edges as ellipses 1.5 % of chord long (tip radius ≈ 3 mm) and fair the mast spine symmetrically (55 mm, ±100 mm) as already set in D6. The edge radius and spine fairing are **provisional**: they are chosen for manufacturing and structure, because the aerodynamic tool cannot resolve their effect.
 
-**Method.** `4_Section_Design.ipynb`: a parametric section generator (S1–S6), thin-airfoil checks (S8, S9), NeuralFoil 2D polars with a lifting-line AR 1.46 correction (S10–S12), pivot moment (S13–S15), and a sweep over camber 5–10 %, thickness 8–13 mm and edge ellipse 0.8–3 % of chord. Ncrit 9 and 4 bracket transition.
+**Method.** `4_Section_Design.py`: a parametric section generator (S1–S6), thin-airfoil checks (S8, S9), NeuralFoil 2D polars with a lifting-line AR 1.46 correction (S10–S12), pivot moment (S13–S15), and a sweep over camber 5–10 %, thickness 8–13 mm and edge ellipse 0.8–3 % of chord. Ncrit 9 and 4 bracket transition.
 
 **What the work shows.**
 - Camber is the only factor that matters. 5 → 10 % raises light-air lift (CL at 10°, Re 9×10⁴: 0.56 → 0.65) and lowers 2D-predicted L/D. Thickness (8–13 mm) and edge radius (0.8–3 % c) move the metrics by ≲ 4 %, so there is no aerodynamic case for changing the baseline.
