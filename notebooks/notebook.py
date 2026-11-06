@@ -294,7 +294,7 @@ def _():
             draft_true=t_body, cb_coef=cb_coef, cwp=cwp,
         )
 
-    return hull_shell, hydrostatics
+    return Polygon, hull_shell, hydrostatics, reduce
 
 
 @app.cell
@@ -371,6 +371,202 @@ def _(draft_in, hs):
         scene=dict(aspectmode="data", xaxis_title="x", yaxis_title="y", zaxis_title="z"),
         margin=dict(l=0, r=0, t=0, b=0), height=450, showlegend=False,
     )
+    _fig
+    return
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    ### Wetted Surface and Lateral Plane
+    Splits the submerged body into **hull shell**, **keel** and **rudder**, using the same cut height as `hull_shell` (`hull_body_z`): everything below it is a fin, and the keel and rudder are told apart because they are separate pieces there. Wetted area is the mesh area of each piece below the waterline. The lateral plane is the underwater profile projected onto the centreline (x-z) plane, with its centroid (CLP) and each fin's planform. These are taken upright at the draft set above, so heel and trim are ignored.
+
+    Chord is the x extent of a horizontal section and thickness its y extent. `t/c` is the maximum over the span, and root and tip chords are read at 90% and 10% of the fin span. Aspect ratio is span^2 / planform area (geometric, with no end-plate correction).
+    """)
+    return
+
+
+@app.cell
+def _():
+    import shapely
+
+
+    def profile_union(m):
+        """Union of the mesh's triangles projected onto the x-z plane (a shapely geometry)."""
+        t = m.triangles[:, :, [0, 2]]
+        a = ((t[:, 1, 0] - t[:, 0, 0]) * (t[:, 2, 1] - t[:, 0, 1])
+             - (t[:, 1, 1] - t[:, 0, 1]) * (t[:, 2, 0] - t[:, 0, 0]))
+        return shapely.union_all(shapely.make_valid(shapely.polygons(t[np.abs(a) > 1e-12])))
+
+
+    def fin_props(fin, n=15):
+        """Wetted area, planform and section properties of one fin (open mesh)."""
+        prof = profile_union(fin)
+        z0, z1 = fin.bounds[0, 2], fin.bounds[1, 2]
+        zs = np.linspace(z0, z1, n + 2)[1:-1]
+        zc, chord, thick = [], [], []
+        for z in zs:
+            s = fin.section(plane_origin=[0, 0, z], plane_normal=[0, 0, 1])
+            if s is None or not len(s.discrete):
+                continue  # open cut edge at the shell, no closed loop
+            loops = s.discrete
+            pts = np.vstack(loops)
+            zc.append(z)
+            chord.append(np.ptp(pts[:, 0]))                      # all pieces, incl. gaps between them
+            thick.append(max(np.ptp(d[:, 1]) for d in loops))    # thickest single piece (slots are small)
+        zs, chord, thick = np.array(zc), np.array(chord), np.array(thick)
+        span = z1 - z0
+        return dict(
+            wetted=fin.area, planform=prof.area, span=span,
+            clp_x=prof.centroid.x, clp_z=prof.centroid.y,
+            mean_chord=prof.area / span, aspect_ratio=span**2 / prof.area,
+            root_chord=float(np.interp(z0 + 0.9 * span, zs, chord)),
+            tip_chord=float(np.interp(z0 + 0.1 * span, zs, chord)),
+            tc_max=float((thick / chord).max()), x_le=fin.bounds[0, 0], x_te=fin.bounds[1, 0],
+        )
+
+
+    def underwater_profile(hull, draft, z_bot):
+        """Wetted areas and lateral plane of the upright hull below z = draft.
+
+        z_bot is the hull-shell cut height (`hull_shell`); faces below it are fins,
+        sorted fore to aft (keel, then rudder).
+        """
+        sub = hull.slice_plane([0, 0, draft], [0, 0, -1], cap=False)
+        low = sub.triangles_center[:, 2] < z_bot
+        shell = sub.submesh([np.where(~low)[0]], append=True)
+        fins = sorted(sub.submesh([np.where(low)[0]], append=True).split(only_watertight=False),
+                      key=lambda f: f.bounds[0, 0])
+        prof = profile_union(sub)
+        return dict(
+            sub=sub, profile=prof, shell_wetted=shell.area, total_wetted=sub.area,
+            lat_area=prof.area, clp_x=prof.centroid.x, clp_z=prof.centroid.y,
+            fins=[fin_props(f) for f in fins],
+        )
+
+    return shapely, underwater_profile
+
+
+@app.cell
+def _(draft_in, hull, hull_body_z, underwater_profile):
+    up = underwater_profile(hull, draft_in.value, hull_body_z)
+    mo.stop(len(up["fins"]) != 2, mo.callout(
+        f"Expected 2 fins (keel, rudder) below z={hull_body_z:.3f} m but found {len(up['fins'])}.", kind="warn"))
+    keel_p, rudder_p = up["fins"]
+    _rows = [
+        ("Wetted: hull shell (m^2)", up["shell_wetted"], ".4f"),
+        ("Wetted: keel (m^2)", keel_p["wetted"], ".4f"),
+        ("Wetted: rudder (m^2)", rudder_p["wetted"], ".4f"),
+        ("Wetted: total (m^2)", up["total_wetted"], ".4f"),
+        ("Lateral plane area, whole underwater body (m^2)", up["lat_area"], ".4f"),
+        ("CLP from stern (m)", up["clp_x"], ".4f"),
+        ("CLP above keel tip (m)", up["clp_z"], ".4f"),
+    ]
+    for _name, _p in [("Keel", keel_p), ("Rudder", rudder_p)]:
+        _rows += [
+            (f"{_name}: planform area (m^2)", _p["planform"], ".4f"),
+            (f"{_name}: span below shell (m)", _p["span"], ".4f"),
+            (f"{_name}: mean chord (m)", _p["mean_chord"], ".4f"),
+            (f"{_name}: root / tip chord (m)", f"{_p['root_chord']:.4f} / {_p['tip_chord']:.4f}", ""),
+            (f"{_name}: aspect ratio", _p["aspect_ratio"], ".3f"),
+            (f"{_name}: max t/c", _p["tc_max"], ".3f"),
+            (f"{_name}: leading / trailing edge x (m)", f"{_p['x_le']:.4f} / {_p['x_te']:.4f}", ""),
+            (f"{_name}: planform centroid x, z (m)", f"{_p['clp_x']:.4f}, {_p['clp_z']:.4f}", ""),
+        ]
+    mo.ui.table(
+        [{"Property": k, "Value": format(v, f) if f else v} for k, v, f in _rows],
+        selection=None, pagination=False,
+    )
+    return (up,)
+
+
+@app.cell
+def _(draft_in, up):
+    _fig, _ax = plt.subplots(figsize=(8, 3))
+    _geoms = up["profile"].geoms if hasattr(up["profile"], "geoms") else [up["profile"]]
+    for _g in _geoms:
+        _x, _y = _g.exterior.xy
+        _ax.fill(_x, _y, color="steelblue", alpha=0.6)
+    _ax.axhline(draft_in.value, color="deepskyblue", ls="--", lw=1, label="waterline")
+    _ax.plot(up["clp_x"], up["clp_z"], "r+", ms=12, mew=2, label="CLP")
+    _ax.set_aspect("equal")
+    _ax.set_xlabel("x from stern (m)")
+    _ax.set_ylabel("z above keel tip (m)")
+    _ax.set_title("Lateral plane (underwater profile)")
+    _ax.legend(loc="upper left")
+    _ax.grid(alpha=0.3)
+    _fig
+    return
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    ### Form Coefficients
+    Longitudinal form of the **hull shell** below the waterline (keel and rudder excluded, as for Cb and Cwp). The midship section coefficient is `Cm = Am / (BWL x T)` with `Am` the largest submerged transverse section area, and the prismatic coefficient is `Cp = V / (Am x LWL) = Cb / Cm`. LCB is given as a percentage of LWL measured forward (+) or aft (-) of the middle of the waterline length. The half-angle of entrance is the angle of the waterline to the centreline, measured between 5% and 15% of LWL aft of the bow. The first few percent of the bow are left out because the waterline rounds off there.
+    """)
+    return
+
+
+@app.cell
+def _(Polygon, reduce, shapely):
+    def section_area(mesh, x):
+        """Area of the transverse (y-z) section of a closed mesh at station x."""
+        sec = mesh.section(plane_origin=[x, 0, 0], plane_normal=[1, 0, 0])
+        if sec is None:
+            return 0.0
+        loops = [Polygon(d[:, 1:]).buffer(0) for d in sec.discrete if len(d) >= 4]
+        return reduce(lambda a, b: a.symmetric_difference(b), loops).area  # even-odd
+
+
+    def half_breadth(geom, x):
+        """Half the width of a waterplane geometry at station x."""
+        cut = geom.intersection(shapely.geometry.LineString([(x, -10), (x, 10)]))
+        return 0.0 if cut.is_empty else cut.bounds[3] - cut.bounds[1]
+
+    return half_breadth, section_area
+
+
+@app.cell
+def _(draft_in, half_breadth, hs, hull_body, section_area):
+    shell_sub = hull_body.slice_plane([0, 0, draft_in.value], [0, 0, -1], cap=True)
+    _wp = hs["wp"]
+    _x0, _x1 = _wp["geom"].bounds[0], _wp["geom"].bounds[2]
+    _lwl = _x1 - _x0
+    form_x = np.linspace(_x0, _x1, 81)[1:-1]
+    form_sac = np.array([section_area(shell_sub, x) for x in form_x])
+    _am = form_sac.max()
+    _cm = _am / (_wp["bwl"] * hs["draft_true"])
+    _cp = shell_sub.volume / (_am * _lwl)
+    _lcb = shell_sub.center_mass[0]
+    _xa, _xb = _x1 - 0.15 * _lwl, _x1 - 0.05 * _lwl
+    _ie = np.degrees(np.arctan2((half_breadth(_wp["geom"], _xb) - half_breadth(_wp["geom"], _xa)) / 2, _xb - _xa)) * -1
+    form = dict(am=_am, cm=_cm, cp=_cp, lcb_pct=100 * ((_lcb - _x0) / _lwl - 0.5),
+                lcb_whole_pct=100 * ((hs["cb"][0] - _x0) / _lwl - 0.5), ie=_ie, lwl=_lwl, x0=_x0)
+    mo.ui.table([{"Property": k, "Value": format(v, f)} for k, v, f in [
+        ("LWL (m)", _lwl, ".4f"),
+        ("Max section area Am (m^2)", _am, ".5f"),
+        ("Midship section coefficient Cm", _cm, ".4f"),
+        ("Prismatic coefficient Cp", _cp, ".4f"),
+        ("Cm x Cp (equals Cb of the hull shell)", _cm * _cp, ".4f"),
+        ("LCB, hull shell (% LWL from midpoint, + fwd)", form["lcb_pct"], "+.2f"),
+        ("LCB, whole body incl. keel and rudder (% LWL, + fwd)", form["lcb_whole_pct"], "+.2f"),
+        ("Half-angle of entrance (deg)", _ie, ".2f"),
+    ]], selection=None, pagination=False)
+    return form_sac, form_x
+
+
+@app.cell
+def _(form_sac, form_x, hs):
+    _fig, _ax = plt.subplots(figsize=(8, 3))
+    _ax.plot(form_x, form_sac, "-", label="section area")
+    _ax.fill_between(form_x, form_sac, alpha=0.2)
+    _ax.axvline(hs["cb"][0], color="r", ls="--", lw=1, label="LCB (whole body)")
+    _ax.set_xlabel("x from stern (m)")
+    _ax.set_ylabel("Section area (m^2)")
+    _ax.set_title("Sectional area curve, hull shell")
+    _ax.legend()
+    _ax.grid(alpha=0.3)
     _fig
     return
 
@@ -495,7 +691,7 @@ def _(
         "Area 0-40 deg (m.rad)": f"{_area(40):.4f}" if _area(40) is not None else "n/a",
     }
     mo.ui.table([{"Metric": k, "Value": v} for k, v in gz_metrics.items()], selection=None, pagination=False)
-    return gz_heel, gz_val
+    return gz_draft, gz_heel, gz_val
 
 
 @app.cell
@@ -508,6 +704,120 @@ def _(gz_heel, gz_val):
     _ax.set_title("GZ Curve")
     _ax.grid(alpha=0.3)
     _fig
+    return
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    ### Stability Limits
+    Angles that bound the useful range of the GZ curve above. The hull is a closed lens with no gunwale (its widest point, z of about 0.65 m, is almost at the waterline), so there is no deck-edge immersion angle to read off. Instead, enter the **downflooding point**: the lowest opening that lets water in (a hatch or vent), as its half-breadth `|y|` from the centerline and its height `z` above the keel tip in the hull frame. It is taken on the leeward side, and its height above the waterline is `z cos(heel) - |y| sin(heel)` compared with the solved waterline height at each heel. The usable range ends at the first of downflooding or vanishing stability. Righting moment is `GZ x displacement x g`.
+    """)
+    return
+
+
+@app.cell
+def _():
+    dfy_in = mo.ui.number(start=0.0, stop=0.3, step=0.005, value=0.0, label="Downflooding point |y| (m)")
+    dfz_in = mo.ui.number(start=0.0, stop=1.0, step=0.005, value=0.78, label="Downflooding point z above keel tip (m)")
+    mo.hstack([dfy_in, dfz_in], justify="start")
+    return dfy_in, dfz_in
+
+
+@app.cell
+def _(dfy_in, dfz_in, gz_draft, gz_heel, gz_val, mass_in):
+    def first_crossing(x, y):
+        """First x where y falls through zero (linear interpolation), else None."""
+        for k in range(1, len(x)):
+            if y[k - 1] > 0 >= y[k]:
+                return float(np.interp(0.0, [y[k], y[k - 1]], [x[k], x[k - 1]]))
+        return None
+
+
+    _h = np.radians(gz_heel)
+    # height of the leeward downflooding point above the solved waterline
+    df_margin = (dfz_in.value * np.cos(_h) - dfy_in.value * np.sin(_h)) - gz_draft
+    df_angle = first_crossing(gz_heel, df_margin)
+    avs_angle = first_crossing(gz_heel, gz_val)
+    _lim = [a for a in (df_angle, avs_angle) if a is not None]
+    use_angle = min(_lim) if _lim else None
+    _in_range = gz_heel <= (use_angle if use_angle is not None else gz_heel[-1])
+    _rm = gz_val * mass_in.value * 9.80665
+    _j = int(np.argmax(np.where(_in_range, gz_val, -np.inf)))
+    _gz_df = float(np.interp(df_angle, gz_heel, gz_val)) if df_angle is not None else None
+    _area_use = (float(np.trapezoid(gz_val[_in_range], np.radians(gz_heel[_in_range])))
+                 if _in_range.sum() > 1 else None)
+
+
+    def _fmt(v, f):
+        return format(v, f) if v is not None else "not reached"
+
+
+    _rows = [
+        ("Angle of vanishing stability (deg)", _fmt(avs_angle, ".1f") if avs_angle is not None else f"> {gz_heel[-1]:.0f}"),
+        ("Downflooding angle (deg)", _fmt(df_angle, ".1f") if df_angle is not None else f"> {gz_heel[-1]:.0f}"),
+        ("Usable range ends at (deg)", _fmt(use_angle, ".1f") if use_angle is not None else f"> {gz_heel[-1]:.0f}"),
+        ("GZ at downflooding (m)", _fmt(_gz_df, ".4f")),
+        ("Max GZ within usable range (m)", f"{gz_val[_j]:.4f} at {gz_heel[_j]:.1f} deg"),
+        ("Max righting moment within usable range (N.m)", f"{_rm[_j]:.1f}"),
+        ("GZ area within usable range (m.rad)", _fmt(_area_use, ".4f")),
+    ]
+    mo.ui.table([{"Property": k, "Value": v} for k, v in _rows], selection=None, pagination=False)
+    return avs_angle, df_angle
+
+
+@app.cell
+def _(avs_angle, df_angle, gz_heel, gz_val):
+    _fig, _ax = plt.subplots()
+    _ax.plot(gz_heel, gz_val, "o-", ms=4, label="GZ")
+    _ax.axhline(0, color="gray", lw=0.8)
+    for _a, _c, _l in [(df_angle, "tab:orange", "downflooding"), (avs_angle, "tab:red", "vanishing stability")]:
+        if _a is not None:
+            _ax.axvline(_a, color=_c, ls="--", label=f"{_l} {_a:.1f} deg")
+    _ax.set_xlabel("Heel angle (deg)")
+    _ax.set_ylabel("GZ (m)")
+    _ax.set_title("GZ curve with stability limits")
+    _ax.legend()
+    _ax.grid(alpha=0.3)
+    _fig
+    return
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    ### Metacentric Heights
+    Initial stability and trim response at the draft, heel and trim set above, for the centre of gravity set in the GZ section (`KG`). `KMt = KB + BMt` and `KML = KB + BML` come from the waterplane inertias, and `GM = KM - KG`. `MCT1cm = displacement x GML / (100 x LWL)` is the moment needed to change trim by 1 cm over the waterline length. The displacement here is the one at the draft input, which may differ from the mass entered for the GZ curve.
+    """)
+    return
+
+
+@app.cell
+def _(gz_heel, gz_val, hs, kg_in):
+    _kb = hs["cb_earth"][2]
+    _kml = _kb + hs["bm_l"]
+    _gmt = hs["kmt"] - kg_in.value
+    _gml = _kml - kg_in.value
+    _mct = hs["mass"] * _gml / (100 * hs["wp"]["lwl"])
+    _rows = [
+        ("Displacement at this draft (kg)", hs["mass"], ".2f"),
+        ("KB (m)", _kb, ".4f"),
+        ("BMt (m)", hs["bm_t"], ".4f"),
+        ("KMt (m)", hs["kmt"], ".4f"),
+        ("KG (m)", kg_in.value, ".4f"),
+        ("GMt (m)", _gmt, ".4f"),
+        ("BML (m)", hs["bm_l"], ".4f"),
+        ("KML (m)", _kml, ".4f"),
+        ("GML (m)", _gml, ".4f"),
+        ("MCT 1 cm (kg.m per cm)", _mct, ".3f"),
+        ("GM from GZ slope at mass_in (m)", float(gz_val[1] / np.sin(np.radians(gz_heel[1]))), ".4f"),
+    ]
+    mo.vstack([
+        mo.callout("GMt is negative: upright is unstable at this KG." if _gmt < 0 else "GMt is positive.",
+                   kind="danger" if _gmt < 0 else "success"),
+        mo.ui.table([{"Property": k, "Value": format(v, f)} for k, v, f in _rows],
+                    selection=None, pagination=False),
+    ])
     return
 
 
