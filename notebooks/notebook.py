@@ -539,7 +539,7 @@ def _(draft_in, hull, profile_union):
     ]
     mo.ui.table([{"Property": k, "Value": format(v, f) if f else v} for k, v, f in _rows],
                 selection=None, pagination=False)
-    return air_front, air_side
+    return air_front, air_side, fb_top, fb_x
 
 
 @app.cell
@@ -1027,6 +1027,81 @@ def _(
         ("Natural roll period (s)", f"{roll_period:.2f}"),
     ]
     mo.ui.table([{"Property": k, "Value": v} for k, v in _rows], selection=None, pagination=False)
+    return
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    ### Mast Step and Sail-Plan Datum
+    Fixes where the rig attaches to the hull and the frame the sail design will work in. The **sail datum** is the mast step: a point on the centerline (or offset by `y`) at the hull's top surface at the chosen `x`, plus an optional height offset for a mast foot or step plate. Sail geometry is then given relative to it, as `p_hull = mast_step + p_sail`, with the same axes as the hull (x forward, y to port, z up, metres). Heights above the waterline use the draft set in the hydrostatics section.
+
+    The air-draft limit is the greatest allowed height of the top of the rig above the waterline, from any bridge, lock or handling limit. The default is a placeholder, so replace it with the real figure. The lead is the longitudinal distance from the centre of lateral resistance to the mast step, positive when the mast is ahead of it. The sail's centre of effort will normally sit a little ahead of the CLP.
+    """)
+    return
+
+
+@app.cell
+def _(hull):
+    step_x_in = mo.ui.number(start=0.0, stop=float(hull.bounds[1, 0]), step=0.01, value=1.0, label="Mast step x from stern (m)")
+    step_y_in = mo.ui.number(start=-0.3, stop=0.3, step=0.005, value=0.0, label="Mast step y, + port (m)")
+    step_dz_in = mo.ui.number(start=-0.2, stop=0.5, step=0.005, value=0.0, label="Step height above hull top (m)")
+    airdraft_in = mo.ui.number(start=0.5, stop=30.0, step=0.1, value=5.0, label="Air-draft limit above waterline (m)")
+    mo.hstack([step_x_in, step_y_in, step_dz_in, airdraft_in], justify="start")
+    return airdraft_in, step_dz_in, step_x_in, step_y_in
+
+
+@app.cell
+def _(
+    air_side,
+    airdraft_in,
+    draft_in,
+    fb_top,
+    fb_x,
+    hs,
+    hull,
+    kg_in,
+    lcg_in,
+    step_dz_in,
+    step_x_in,
+    step_y_in,
+    up,
+):
+    _deck = float(np.interp(step_x_in.value, fb_x, fb_top))
+    mast_step = np.array([step_x_in.value, step_y_in.value, _deck + step_dz_in.value])
+    _wl = draft_in.value
+    _lwl = hs["wp"]["lwl"]
+    _rows = [
+        ("Mast step (x, y, z) in hull frame (m)", ", ".join(f"{v:.4f}" for v in mast_step)),
+        ("Hull top at step station, above keel tip (m)", f"{_deck:.4f}"),
+        ("Step height above waterline (m)", f"{mast_step[2] - _wl:.4f}"),
+        ("Step position, fraction of LWL from bow", f"{(hull.bounds[1, 0] - mast_step[0]) / _lwl:.3f}"),
+        ("Lead: step ahead of CLP (m)", f"{mast_step[0] - up['clp_x']:+.4f}"),
+        ("Step ahead of LCB / LCF / LCG (m)", " / ".join(
+            f"{mast_step[0] - v:+.4f}" for v in (hs["cb"][0], hs["wp"]["lcf"], lcg_in.value))),
+        ("Height of step above CLP (m)", f"{mast_step[2] - up['clp_z']:+.4f}"),
+        ("Rig height available above the step (m)", f"{_wl + airdraft_in.value - mast_step[2]:.4f}"),
+    ]
+    _fig, _ax = plt.subplots(figsize=(8, 3.2))
+    for _g, _c in [(up["profile"], "steelblue"), (air_side, "lightsteelblue")]:
+        for _p in (_g.geoms if hasattr(_g, "geoms") else [_g]):
+            _ax.fill(*_p.exterior.xy, color=_c, alpha=0.7)
+    _ax.axhline(_wl, color="deepskyblue", ls="--", lw=1, label="waterline")
+    _ax.axhline(_wl + airdraft_in.value, color="gray", ls=":", lw=1, label="air-draft limit")
+    _ax.plot([mast_step[0]], [mast_step[2]], "k^", ms=9, label="mast step")
+    _ax.plot([up["clp_x"]], [up["clp_z"]], "r+", ms=11, mew=2, label="CLP")
+    _ax.plot([hs["cb"][0]], [hs["cb"][2]], "go", ms=6, label="CB")
+    _ax.plot([lcg_in.value], [kg_in.value], "mx", ms=8, mew=2, label="CG")
+    _ax.set_xlabel("x from stern (m)")
+    _ax.set_ylabel("z above keel tip (m)")
+    _ax.set_ylim(0, _wl + min(airdraft_in.value, 1.5))
+    _ax.set_aspect("equal")
+    _ax.legend(loc="upper left", fontsize=8, ncol=3)
+    _ax.grid(alpha=0.3)
+    mo.vstack([
+        mo.ui.table([{"Property": k, "Value": v} for k, v in _rows], selection=None, pagination=False),
+        _fig,
+    ])
     return
 
 
