@@ -239,12 +239,25 @@ def _():
         )
 
 
-    def hydrostatics(hull, draft, heel_deg, trim_deg, rho, pivot_z=None):
+    def hull_shell(hull, frac=0.05, dz=0.005):
+        """Hull without keel/rudder: `hull` cut off below the lowest height where the
+        section area exceeds `frac` of its maximum (the keel and rudder are thin
+        fins, the shell is the wide body above them). Returns (shell, z_bottom)."""
+        zs = np.arange(dz, hull.bounds[1, 2], dz)
+        area = np.array([(waterplane_props(hull, z) or {"area": 0.0})["area"] for z in zs])
+        z_bot = float(zs[np.argmax(area > frac * area.max())])
+        return hull.slice_plane([0, 0, z_bot], [0, 0, 1], cap=True), z_bot
+
+
+    def hydrostatics(hull, draft, heel_deg, trim_deg, rho, pivot_z=None, shell=None):
         """Upright/heeled/trimmed hydrostatics.
 
         The hull is rotated about the midship centerline point at height `pivot_z`
         (default: `draft`; heel about x, then trim about y); the water plane is z = draft.
-        Centre of buoyancy is returned in hull-fixed coordinates.
+        Centre of buoyancy is returned in hull-fixed coordinates. If `shell` (the hull
+        without keel and rudder, see `hull_shell`) is given, the block and waterplane
+        coefficients (cb_coef, cwp) and draft_true use the shell alone; otherwise the
+        whole body.
         """
         pivot = [hull.bounds[:, 0].mean(), 0.0, draft if pivot_z is None else pivot_z]
         R = trimesh.transformations.rotation_matrix
@@ -261,21 +274,47 @@ def _():
         cb_earth = sub.center_mass
         cb = (np.linalg.inv(M) @ np.append(cb_earth, 1.0))[:3]
         bm_t, bm_l = wp["I_T"] / vol, wp["I_L"] / vol
+        # Form coefficients: shell only (appendages excluded), else the whole body.
+        body = rot if shell is None else shell.copy()
+        if shell is not None:
+            body.apply_transform(M)
+        if body.bounds[0, 2] < draft < body.bounds[1, 2]:
+            body_vol = body.slice_plane([0, 0, draft], [0, 0, -1], cap=True).volume
+            body_wp = waterplane_props(body, draft)
+            t_body = draft - body.bounds[0, 2]
+            cb_coef = body_vol / (body_wp["lwl"] * body_wp["bwl"] * t_body)
+            cwp = body_wp["area"] / (body_wp["lwl"] * body_wp["bwl"])
+        else:
+            t_body = cb_coef = cwp = float("nan")  # waterline below/above the shell
         return dict(
             rot=rot, sub=sub, M=M, wp=wp,
             volume=vol, mass=vol * rho, cb=cb, cb_earth=cb_earth,
             wetted=sub.area - wp["area"], watertight=sub.is_watertight,
             bm_t=bm_t, bm_l=bm_l, kmt=cb_earth[2] + bm_t,
-            cb_coef=vol / (wp["lwl"] * wp["bwl"] * draft),
-            cwp=wp["area"] / (wp["lwl"] * wp["bwl"]),
+            draft_true=t_body, cb_coef=cb_coef, cwp=cwp,
         )
 
-    return (hydrostatics,)
+    return hull_shell, hydrostatics
 
 
 @app.cell
-def _(draft_in, heel_in, hull, hydrostatics, rho_in, trim_in):
-    hs = hydrostatics(hull, draft_in.value, heel_in.value, trim_in.value, rho_in.value)
+def _(hull, hull_shell):
+    hull_body, hull_body_z = hull_shell(hull)
+    return hull_body, hull_body_z
+
+
+@app.cell
+def _(
+    draft_in,
+    heel_in,
+    hull,
+    hull_body,
+    hull_body_z,
+    hydrostatics,
+    rho_in,
+    trim_in,
+):
+    hs = hydrostatics(hull, draft_in.value, heel_in.value, trim_in.value, rho_in.value, shell=hull_body)
     mo.stop(hs is None, mo.callout(
         "Draft puts the hull fully out of, or fully under, the water - nothing to compute.",
         kind="warn"))
@@ -293,8 +332,9 @@ def _(draft_in, heel_in, hull, hydrostatics, rho_in, trim_in):
         ("BMt (m)", hs["bm_t"], ".4f"),
         ("BML (m)", hs["bm_l"], ".4f"),
         ("KMt = KB + BMt (m)", hs["kmt"], ".4f"),
-        ("Block coefficient Cb", hs["cb_coef"], ".4f"),
-        ("Waterplane coefficient Cwp", hs["cwp"], ".4f"),
+        (f"Hull-shell draft T, waterline to shell bottom at z={hull_body_z:.3f} (m)", hs["draft_true"], ".4f"),
+            ("Block coefficient Cb, hull shell only", hs["cb_coef"], ".4f"),
+        ("Waterplane coefficient Cwp, hull shell only", hs["cwp"], ".4f"),
     ]
     mo.vstack([
         mo.callout("Submerged volume is a closed mesh." if hs["watertight"]
