@@ -4,6 +4,7 @@
 #     "marimo>=0.25.2",
 #     "matplotlib==3.11.2",
 #     "networkx==3.7",
+#     "neuralfoil==0.3.3",
 #     "numpy==2.5.4",
 #     "plotly==7.1.0",
 #     "rtree==1.4.1",
@@ -1207,7 +1208,7 @@ def _(
         mo.ui.table(_rows, selection=None, pagination=False),
         _fig,
     ])
-    return (KNOT,)
+    return KNOT, rho_air, wind_at
 
 
 @app.cell(hide_code=True)
@@ -1633,8 +1634,307 @@ def _(KNOT, arf_in, rho_in, up, v_req):
 def _():
     mo.md(r"""
     ## Wing-Sail Aerodynamics
-    _To do:_ section data (Cl, Cd, Cm against angle of attack at the right Reynolds number), finite-span corrections, flap or tail control, and the centre of effort against the mast step and CLP.
+    The sail is one rigid, symmetric wing (NACA 00xx) turned about its mast by a motor, so there is no sheet trim and no camber, and the angle of attack is set directly. Lift and drag are built in three steps: the planform from area, aspect ratio and taper; two-dimensional section data from NeuralFoil at the sail's Reynolds number; and finite-span corrections for lift slope and induced drag. A last step finds the centre of effort and the torque the mast motor must hold. _To do:_ flap or tail control.
+
+    ### Planform
+    The span is `b = sqrt(AR S)`, the root chord `c_r = 2 S / (b (1 + lambda))` and the tip chord `lambda c_r`, where `lambda` is the taper ratio. The mean aerodynamic chord (MAC) and its distance from the root follow from the trapezoid formulas. The root sits on the mast step. The **end-plate factor** multiplies the aspect ratio in the lift and drag calculations only: a sail close to the deck behaves as if it were longer, up to a factor of 2 for a perfect end plate, and 1 means no benefit assumed.
     """)
+    return
+
+
+@app.cell
+def _():
+    sail_tc_in = mo.ui.number(start=6, stop=24, step=1, value=12, label="Thickness ratio t/c (%, the xx in NACA 00xx)")
+    sail_area_in = mo.ui.number(start=0.1, stop=5.0, step=0.01, value=0.65, label="Sail area S (m^2)")
+    sail_ar_in = mo.ui.number(start=0.5, stop=6.0, step=0.05, value=1.75, label="Aspect ratio b^2 / S")
+    sail_taper_in = mo.ui.number(start=0.2, stop=1.0, step=0.05, value=1.0, label="Taper ratio (tip chord / root chord)")
+    sail_arf_in = mo.ui.number(start=1.0, stop=2.0, step=0.05, value=1.0, label="End-plate factor on aspect ratio")
+    mo.vstack([
+        mo.hstack([sail_tc_in, sail_area_in], justify="start"),
+        mo.hstack([sail_ar_in, sail_taper_in, sail_arf_in], justify="start"),
+    ])
+    return sail_ar_in, sail_area_in, sail_arf_in, sail_taper_in, sail_tc_in
+
+
+@app.cell
+def _(
+    airdraft_in,
+    draft_in,
+    mast_step,
+    sail_ar_in,
+    sail_area_in,
+    sail_arf_in,
+    sail_taper_in,
+):
+    def sail_planform(S, ar, taper):
+        """Trapezoidal planform: span, root and tip chord, MAC and its distance from the root (m)."""
+        b = np.sqrt(ar * S)
+        c_root = 2 * S / (b * (1 + taper))
+        return {
+            "S": S, "ar": ar, "taper": taper, "b": b, "c_root": c_root, "c_tip": taper * c_root,
+            "mac": 2 / 3 * c_root * (1 + taper + taper**2) / (1 + taper),
+            "z_mac": b / 6 * (1 + 2 * taper) / (1 + taper),
+        }
+
+
+    sail = sail_planform(sail_area_in.value, sail_ar_in.value, sail_taper_in.value)
+    _rig_h = draft_in.value + airdraft_in.value - mast_step[2]
+    _rows = [
+        ("Span b (m)", f"{sail['b']:.3f}",
+         f"{_rig_h:.3f} m available above the step: " + ("OK" if sail["b"] <= _rig_h else "EXCEEDS")),
+        ("Root / tip chord (m)", f"{sail['c_root']:.3f} / {sail['c_tip']:.3f}", ""),
+        ("Mean aerodynamic chord (m)", f"{sail['mac']:.3f}", f"{sail['z_mac']:.3f} m above the root"),
+        ("Effective aspect ratio", f"{sail_arf_in.value * sail['ar']:.2f}", f"geometric {sail['ar']:.2f}"),
+    ]
+
+    _c = lambda z: sail["c_root"] + (sail["c_tip"] - sail["c_root"]) * z / sail["b"]
+    _x = lambda z: 0.25 * (sail["c_root"] - _c(z))  # unswept quarter-chord line
+    _fig, _ax = plt.subplots(figsize=(4.5, 3.6))
+    _ax.fill([_x(0), _x(0) + _c(0), _x(sail["b"]) + _c(sail["b"]), _x(sail["b"])],
+             [0, 0, sail["b"], sail["b"]], color="steelblue", alpha=0.7)
+    _ax.axvline(0.25 * sail["c_root"], color="k", ls="--", lw=1, label="quarter-chord line")
+    _ax.axhline(sail["z_mac"], color="r", ls=":", lw=1, label="MAC")
+    _ax.set_xlabel("Chordwise (m)")
+    _ax.set_ylabel("Above the root (m)")
+    _ax.set_aspect("equal")
+    _ax.legend(fontsize=8)
+    _ax.grid(alpha=0.3)
+    mo.hstack([
+        mo.ui.table([{"Property": a, "Value": b, "Note": c} for a, b, c in _rows], selection=None, pagination=False),
+        _fig,
+    ], justify="start")
+    return (sail,)
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    ### Section Data
+    Section lift, drag and moment come from NeuralFoil (a neural surrogate for XFOIL) run on the exact NACA 00xx outline, so the thickness ratio above is a live input. The Reynolds number is set by the **design wind** at the height of the mean chord, with the wind taken as the apparent wind for now: `Re = V c_MAC / nu`, and air viscosity from Sutherland's law. The grey curves are the same section at `Re = 3e6`, the usual wind-tunnel reference condition for tabulated NACA data, so the two can be compared. The **analysis confidence** NeuralFoil reports drops where it is extrapolating, which at this low Reynolds number happens past stall.
+    """)
+    return
+
+
+@app.cell
+def _(
+    KNOT,
+    air_temp_in,
+    alpha_in,
+    draft_in,
+    mast_step,
+    rho_air,
+    sail,
+    sail_tc_in,
+    vdes_in,
+    wind_at,
+    zref_in,
+):
+    import neuralfoil as nf
+
+
+    def section_coords(tc, n=101):
+        """NACA 00xx outline (x/c, y/c), trailing edge to leading edge on top, then back along the bottom."""
+        s = 0.5 * (1 - np.cos(np.linspace(0, np.pi, n)))
+        yt = 5 * tc * (0.2969 * np.sqrt(s) - 0.1260 * s - 0.3516 * s**2 + 0.2843 * s**3 - 0.1036 * s**4)
+        return np.vstack([np.c_[s[::-1], yt[::-1]], np.c_[s[1:], -yt[1:]]])
+
+
+    SEC_ALPHA = np.arange(-30.0, 30.01, 0.5)
+
+
+    def section_polar(tc, re, alpha=SEC_ALPHA):
+        """Section CL, CD and CM (about the quarter chord) against angle of attack (deg)."""
+        r = nf.get_aero_from_coordinates(section_coords(tc), alpha=alpha, Re=re, model_size="xxxlarge")
+        return {"alpha": np.asarray(alpha), **{k: np.asarray(r[k]) for k in ("CL", "CD", "CM", "analysis_confidence")}}
+
+
+    _T = air_temp_in.value + 273.15
+    nu_air = 1.716e-5 * (_T / 273.15) ** 1.5 * (273.15 + 110.4) / (_T + 110.4) / rho_air
+    sail_z = mast_step[2] - draft_in.value + sail["z_mac"]  # height of the MAC above the waterline
+    v_sail = float(wind_at(sail_z, vdes_in.value * KNOT, zref_in.value, alpha_in.value))
+    re_sail = v_sail * sail["mac"] / nu_air
+    sec = section_polar(sail_tc_in.value / 100, re_sail)
+    sec_ref = section_polar(sail_tc_in.value / 100, 3e6)
+
+    _i = np.argmax(sec["CL"])
+    _slope = (np.interp(1, sec["alpha"], sec["CL"]) - np.interp(-1, sec["alpha"], sec["CL"])) / 2
+    _rows = [
+        ("Wind at the MAC (m/s)", f"{v_sail:.2f}", f"design wind, {sail_z:.2f} m above the waterline"),
+        ("Reynolds number", f"{re_sail:.3g}", f"MAC {sail['mac']:.3f} m, nu {nu_air:.3g} m^2/s"),
+        ("CL slope (per deg)", f"{_slope:.4f}", f"thin-airfoil theory 2 pi: {2 * np.pi * np.pi / 180:.4f}"),
+        ("CL max / stall angle (deg)", f"{sec['CL'][_i]:.3f} / {sec['alpha'][_i]:.1f}", ""),
+        ("CD at zero lift", f"{np.interp(0, sec['alpha'], sec['CD']):.4f}", ""),
+    ]
+    _fig, _axs = plt.subplots(1, 3, figsize=(11, 3.3))
+    for _s, _kw in ((sec_ref, dict(color="gray", ls="--", label="Re = 3e6")),
+                    (sec, dict(color="C0", label=f"Re = {re_sail:.2g}"))):
+        _axs[0].plot(_s["alpha"], _s["CL"], **_kw)
+        _axs[1].plot(_s["CD"], _s["CL"], **_kw)
+        _axs[2].plot(_s["alpha"], _s["CM"], **_kw)
+    _axs[0].set(xlabel="Angle of attack (deg)", ylabel="Section CL", xlim=(-30, 30))
+    _axs[1].set(xlabel="Section CD", ylabel="Section CL", xlim=(0, 0.25))
+    _axs[2].set(xlabel="Angle of attack (deg)", ylabel="Section CM about c/4", xlim=(-30, 30))
+    for _ax in _axs:
+        _ax.grid(alpha=0.3)
+    _axs[0].legend()
+    _low = sec["alpha"][sec["analysis_confidence"] < 0.8]
+    mo.vstack([
+        mo.ui.table([{"Property": a, "Value": b, "Note": c} for a, b, c in _rows], selection=None, pagination=False),
+        _fig,
+        mo.md(f"NeuralFoil confidence is below 0.8 for {len(_low)} of {len(sec['alpha'])} angles"
+              + (f" (|alpha| from {np.abs(_low).min():.1f} deg)." if len(_low) else ".")),
+    ])
+    return re_sail, sail_z, section_polar, v_sail
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    ### Finite-Span Corrections
+    The sail's aspect ratio is low, so the section data cannot be used directly. Three corrections turn the section polar into a sail polar, all using the effective aspect ratio `AR_eff`.
+
+    - **Lift slope:** Helmbold's formula, `a = pi AR_eff / (1 + sqrt(1 + (pi AR_eff / a0)^2))`, with `a0` the section lift slope from NeuralFoil. It stays accurate at low aspect ratio, where lifting-line theory over-predicts the slope.
+    - **Downwash:** the angle of attack is reduced by an induced angle proportional to the lift, `alpha_eff = alpha - kappa CL` with `kappa = 1/a - 1/a0`. Reading the section polar at `alpha_eff` keeps the section's stall shape while the linear slope is exactly Helmbold's.
+    - **Induced drag:** `CD = cd(alpha_eff) + CL^2 / (pi AR_eff e)`. The span efficiency `e` comes from a Glauert lifting-line solution for the taper ratio.
+
+    Low aspect ratio wings stall later and softer than the section does because of tip-vortex lift, which this model does not capture, so the stall region is conservative.
+    """)
+    return
+
+
+@app.cell
+def _(re_sail, sail, sail_arf_in, sail_taper_in, sail_tc_in, section_polar):
+    def glauert_e(ar, taper, a0=2 * np.pi, n=40):
+        """Span efficiency of a linearly tapered wing from the Glauert lifting-line series."""
+        th = np.arange(1, n + 1) * np.pi / (2 * n)
+        odd = np.arange(1, 2 * n, 2)
+        mu = a0 * (1 - (1 - taper) * np.cos(th)) / (2 * ar * (1 + taper))
+        A = np.linalg.solve(np.sin(np.outer(th, odd)) * (odd * mu[:, None] + np.sin(th)[:, None]), mu * np.sin(th))
+        return 1 / (1 + np.sum(odd[1:] * (A[1:] / A[0]) ** 2))
+
+
+    def sail_polar(tc, re, ar_eff, taper):
+        """Sail CL and CD against angle of attack (deg), from the section polar and finite-span corrections."""
+        s = section_polar(tc, re)
+        a0 = (np.interp(1, s["alpha"], s["CL"]) - np.interp(-1, s["alpha"], s["CL"])) / np.radians(2)
+        a = np.pi * ar_eff / (1 + np.sqrt(1 + (np.pi * ar_eff / a0) ** 2))
+        kappa = np.degrees(1 / a - 1 / a0)
+        e = glauert_e(ar_eff, taper)
+        al = s["alpha"]
+        cl = a * np.radians(al)
+        for _ in range(100):  # damped fixed point for CL = cl_section(alpha - kappa CL)
+            cl = 0.5 * cl + 0.5 * np.interp(al - kappa * cl, al, s["CL"])
+        al_eff = al - kappa * cl
+        cd = np.interp(al_eff, al, s["CD"]) + cl**2 / (np.pi * ar_eff * e)
+        return {"alpha": al, "alpha_eff": al_eff, "CL": cl, "CD": cd, "a0": a0, "a": a, "e": e, "section": s}
+
+
+    sail_ar_eff = sail_arf_in.value * sail["ar"]
+    sp = sail_polar(sail_tc_in.value / 100, re_sail, sail_ar_eff, sail_taper_in.value)
+
+    _m = (sp["alpha"] >= 0) & (sp["alpha"] <= 25)
+    _i = np.argmax(sp["CL"][_m])
+    _k = np.argmax((sp["CL"] / sp["CD"])[_m])
+    _rows = [
+        ("Section / sail lift slope (per deg)", f"{sp['a0'] * np.pi / 180:.4f} / {sp['a'] * np.pi / 180:.4f}", ""),
+        ("Span efficiency e", f"{sp['e']:.3f}", f"Glauert, taper {sail_taper_in.value:.2f}"),
+        ("CL max / stall angle (deg)", f"{sp['CL'][_m][_i]:.3f} / {sp['alpha'][_m][_i]:.1f}", ""),
+        ("Best CL/CD / at angle (deg)", f"{(sp['CL'] / sp['CD'])[_m][_k]:.2f} / {sp['alpha'][_m][_k]:.1f}",
+         f"CL {sp['CL'][_m][_k]:.3f}, CD {sp['CD'][_m][_k]:.4f}"),
+    ]
+    _fig, _axs = plt.subplots(1, 4, figsize=(13, 3.3))
+    _s = sp["section"]
+    _axs[0].plot(_s["alpha"], _s["CL"], "gray", ls="--", label="section")
+    _axs[0].plot(sp["alpha"], sp["CL"], label="sail")
+    _axs[1].plot(sp["alpha"], sp["CD"], label="sail")
+    _axs[1].plot(_s["alpha"], _s["CD"], "gray", ls="--", label="section")
+    _axs[2].plot(sp["CD"], sp["CL"])
+    _axs[3].plot(sp["alpha"], sp["CL"] / sp["CD"])
+    _axs[0].set(xlabel="Angle of attack (deg)", ylabel="CL", xlim=(-30, 30))
+    _axs[1].set(xlabel="Angle of attack (deg)", ylabel="CD", xlim=(-30, 30), ylim=(0, 0.6))
+    _axs[2].set(xlabel="CD", ylabel="CL", xlim=(0, 0.6))
+    _axs[3].set(xlabel="Angle of attack (deg)", ylabel="CL / CD", xlim=(-30, 30))
+    for _ax in _axs:
+        _ax.grid(alpha=0.3)
+    _axs[0].legend()
+    _axs[1].legend()
+    mo.vstack([mo.ui.table([{"Property": a, "Value": b, "Note": c} for a, b, c in _rows], selection=None, pagination=False), _fig])
+    return (sp,)
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    ### Centre of Effort and Mast Torque
+    The sail turns about its mast, so the mast torque sets the motor size. For a symmetric section the lift acts at the quarter chord at small angles and the centre of pressure moves aft as the moment grows, `x_cp / c = 0.25 - CM / CN`, with `CM` the section moment about the quarter chord at the effective angle and `CN = CL cos(alpha) + CD sin(alpha)` the chord-normal force coefficient. The moment about a mast at chord fraction `x_m` is `CM_mast = CM + CN (x_m - 0.25)`, and the torque is `CM_mast q S c_MAC`. A mast at the quarter chord leaves only the small section moment; a mast ahead of it makes the sail try to feather, and one behind it makes it try to weathercock. Which of the two is the safe failure if the motor lets go is a design choice.
+
+    Spanwise, the lift is assumed elliptical, which puts its centroid at `4 b / (3 pi)` above the root (the deck acts as the symmetry plane). That height, against the centre of lateral resistance, is the heeling arm used in the force balance. The fore-and-aft lead needs the sail angle to the boat, so it waits for that section.
+    """)
+    return
+
+
+@app.cell
+def _():
+    sail_mast_in = mo.ui.number(start=0.0, stop=0.6, step=0.01, value=0.25, label="Mast axis, as a fraction of chord from the leading edge")
+    sail_mast_in
+    return (sail_mast_in,)
+
+
+@app.cell
+def _(
+    KNOT,
+    alpha_in,
+    mast_step,
+    rho_air,
+    sail,
+    sail_mast_in,
+    sail_z,
+    sp,
+    up,
+    v_sail,
+    vdes_in,
+    vsurv_in,
+    wind_at,
+    zref_in,
+):
+    _a = sp["alpha"]
+    _cm_c4 = np.interp(sp["alpha_eff"], _a, sp["section"]["CM"])
+    sail_cn = sp["CL"] * np.cos(np.radians(_a)) + sp["CD"] * np.sin(np.radians(_a))
+    sail_cm_mast = _cm_c4 + sail_cn * (sail_mast_in.value - 0.25)
+    _x_cp = np.where(np.abs(sail_cn) > 0.1, 0.25 - _cm_c4 / np.where(sail_cn == 0, 1, sail_cn), np.nan)
+
+
+    def mast_torque(v):
+        """Mast torque (N m) against angle of attack for an apparent wind v (m/s) at the MAC."""
+        return sail_cm_mast * 0.5 * rho_air * v**2 * sail["S"] * sail["mac"]
+
+
+    v_surv = float(wind_at(sail_z, vsurv_in.value * KNOT, zref_in.value, alpha_in.value))
+    sail_ce_height = 4 * sail["b"] / (3 * np.pi)  # lift centroid above the root, elliptical loading
+    _m = (_a >= 0) & (_a <= 30)
+    _t_des, _t_surv = mast_torque(v_sail), mast_torque(v_surv)
+    _id, _is = np.argmax(np.abs(_t_des[_m])), np.argmax(np.abs(_t_surv[_m]))
+    _rows = [
+        ("Lift centroid above the root (m)", f"{sail_ce_height:.3f}", f"{0.4244:.3f} b"),
+        ("Centroid above the waterline (m)", f"{sail_z - sail['z_mac'] + sail_ce_height:.3f}", ""),
+        ("Centroid above the CLP (m)", f"{mast_step[2] + sail_ce_height - up['clp_z']:.3f}", "heeling arm"),
+        ("Max mast torque, design wind (N m)", f"{abs(_t_des[_m][_id]):.2f}",
+         f"{v_sail:.1f} m/s, at {_a[_m][_id]:.1f} deg"),
+        ("Max mast torque, survival wind (N m)", f"{abs(_t_surv[_m][_is]):.2f}",
+         f"{v_surv:.1f} m/s, at {_a[_m][_is]:.1f} deg"),
+    ]
+    _fig, _axs = plt.subplots(1, 2, figsize=(9, 3.3))
+    _axs[0].plot(_a, _x_cp)
+    _axs[0].axhline(sail_mast_in.value, color="k", ls="--", lw=1, label="mast axis")
+    _axs[0].set(xlabel="Angle of attack (deg)", ylabel="Centre of pressure, x / c", xlim=(0, 30), ylim=(0, 0.6))
+    _axs[0].legend()
+    _axs[1].plot(_a, _t_des, label=f"design wind {vdes_in.value:.0f} kn")
+    _axs[1].plot(_a, _t_surv, label=f"survival wind {vsurv_in.value:.0f} kn")
+    _axs[1].set(xlabel="Angle of attack (deg)", ylabel="Mast torque (N m)", xlim=(-30, 30))
+    _axs[1].legend()
+    for _ax in _axs:
+        _ax.grid(alpha=0.3)
+    mo.vstack([mo.ui.table([{"Property": a, "Value": b, "Note": c} for a, b, c in _rows], selection=None, pagination=False), _fig])
     return
 
 
