@@ -883,5 +883,152 @@ def _(gz_heel, gz_val, hs, kg_in):
     return
 
 
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    ### Mass Moments of Inertia and Added Mass
+    Rotational inertia and added mass for roll, pitch, yaw and the translations. The hull geometry alone does not fix the mass distribution (ballast, payload and structure dominate), so two views are given.
+
+    - **Radii of gyration from the mesh:** the hull treated as a uniform solid, and the submerged (buoyant) volume alone, about their own centroids. A real boat is hollow with its weight low, so these are only a geometric reference.
+    - **Dry inertia from assumed radii:** `I = m k^2` about the CG at the mass, KG and LCG set in the GZ section, with `k` as a fraction of beam (roll) or length (pitch, yaw). Typical values are `kxx` of 0.30-0.40 B and `kyy`, `kzz` of 0.22-0.28 L, so adjust these once the weight breakdown exists.
+    - **Added mass (strip theory with a 3D fin correction):** each underwater section is treated as a half ellipse of half-breadth `b` and depth `T`, giving `a33 = rho pi/2 b^2` (heave) and `a22 = rho pi/2 T^2` (sway). Strips overestimate the sway added mass of a short, deep keel, so the part of `a22` that the keel and rudder add over the bare hull is scaled by a finite-span factor `J`. `J` compares Lamb's exact added mass for an elliptical plate (the fin plus its free-surface image, with the same area as the mean-chord rectangle) with the strip sum for the same plate. Pitch and yaw added inertia integrate `a33` and `a22` with the squared distance from the LCG, and roll uses `a22` times the squared distance from the section centre to the CG. Surge is taken as 5% of displacement. The hull itself stays a plain strip (it is slender), and there is no frequency dependence or free-surface correction, so treat all of it as an estimate.
+
+    The natural roll period is `T = 2 pi sqrt((I44 + A44) / (m g GMt))`.
+    """)
+    return
+
+
+@app.cell
+def _():
+    kxx_in = mo.ui.number(start=0.1, stop=0.6, step=0.01, value=0.35, label="Roll radius kxx / beam")
+    kyy_in = mo.ui.number(start=0.1, stop=0.5, step=0.01, value=0.25, label="Pitch radius kyy / length")
+    kzz_in = mo.ui.number(start=0.1, stop=0.5, step=0.01, value=0.25, label="Yaw radius kzz / length")
+    mo.hstack([kxx_in, kyy_in, kzz_in], justify="start")
+    return kxx_in, kyy_in, kzz_in
+
+
+@app.cell
+def _():
+    from scipy.special import ellipe
+
+
+    def section_bT(body, draft, xs):
+        """Half-breadth b and depth T (waterline to lowest point) of `body` sections at stations xs."""
+        sub = body.slice_plane([0, 0, draft], [0, 0, -1], cap=True)
+        b, T = np.zeros(len(xs)), np.zeros(len(xs))
+        for k, x in enumerate(xs):
+            sec = sub.section(plane_origin=[x, 0, 0], plane_normal=[1, 0, 0])
+            if sec is None:
+                continue
+            pts = np.vstack(sec.discrete)
+            b[k] = np.abs(pts[:, 1]).max()
+            T[k] = draft - pts[:, 2].min()
+        return b, T
+
+
+    def fin_3d_factor(fin, draft, z_bot):
+        """Finite-span factor J (3D / strip) on a fin's sway added mass.
+
+        The immersed fin plus its free-surface image is an elliptical plate with vertical semi-axis
+        s (tip to waterline) and the same area as the mean-chord rectangle, so semi-chord
+        a = 2 c / pi. Lamb's exact added mass for an ellipse moving normal to its plane is
+        4 pi/3 rho M m^2 / E(e) (M, m major and minor semi-axes), against 4 pi/3 rho s^2 a from
+        strips along the chord; J is their ratio (about 1 for a slender fin, small for a deep short one).
+        """
+        s = draft - (z_bot - fin["span"])
+        a = 2 * fin["mean_chord"] / np.pi
+        M, m = max(s, a), min(s, a)
+        return float(M * m**2 / ellipe(1 - (m / M) ** 2) / (s**2 * a))
+
+
+    def strip_added_mass(body, shell, fins, draft, rho, xcg, zcg, z_bot, n=80, correct=True):
+        """Strip-theory added mass and inertia of the submerged `body` (upright).
+
+        Sections are half ellipses of half-breadth b and depth T: heave a33 = rho pi/2 b^2,
+        sway a22 = rho pi/2 T^2. The part of a22 that the keel and rudder add over the hull `shell`
+        is scaled by each fin's 3D factor (`fin_3d_factor`) when `correct`. Returns the integrated
+        A22, A33, A44, A55, A66 plus the fin factors.
+        """
+        sub = body.slice_plane([0, 0, draft], [0, 0, -1], cap=True)
+        xs = np.linspace(sub.bounds[0, 0], sub.bounds[1, 0], n + 2)[1:-1]
+        b, T = section_bT(body, draft, xs)
+        _, T_hull = section_bT(shell, draft, xs)
+        a33 = rho * np.pi / 2 * b**2
+        a22_hull = rho * np.pi / 2 * T_hull**2
+        inc = np.maximum(rho * np.pi / 2 * T**2 - a22_hull, 0.0)
+        J = [fin_3d_factor(f, draft, z_bot) for f in fins]
+        if correct:
+            for f, j in zip(fins, J):
+                inc = np.where((xs >= f["x_le"]) & (xs <= f["x_te"]), inc * j, inc)
+        a22 = a22_hull + inc
+        zc = draft - T / 2  # section centre height
+        I = lambda f: float(np.trapezoid(f, xs))
+        return dict(
+            xs=xs, a22=a22, a33=a33, J=J,
+            A22=I(a22), A33=I(a33),
+            A44=I(a22 * (zc - zcg) ** 2),
+            A55=I(a33 * (xs - xcg) ** 2),
+            A66=I(a22 * (xs - xcg) ** 2),
+        )
+
+    return (strip_added_mass,)
+
+
+@app.cell
+def _(
+    draft_in,
+    hs,
+    hull,
+    hull_body,
+    hull_body_z,
+    kg_in,
+    kxx_in,
+    kyy_in,
+    kzz_in,
+    lcg_in,
+    mass_in,
+    rho_in,
+    strip_added_mass,
+    up,
+):
+    _m, _g = mass_in.value, 9.80665
+    _beam, _len = hull.extents[1], hull.extents[0]
+    _wl = draft_in.value
+    _subv = hull.slice_plane([0, 0, _wl], [0, 0, -1], cap=True)
+
+
+    def _radii(mesh):
+        I = np.diag(mesh.moment_inertia) / mesh.volume  # per unit mass: k^2 about x, y, z
+        return np.sqrt(I)
+
+
+    k_solid, k_buoy = _radii(hull), _radii(_subv)
+    k_dry = np.array([kxx_in.value * _beam, kyy_in.value * _len, kzz_in.value * _len])
+    I_dry = _m * k_dry**2
+    _fins = up["fins"]
+    am = strip_added_mass(hull, hull_body, _fins, _wl, rho_in.value, lcg_in.value, kg_in.value, hull_body_z)
+    am_strip = strip_added_mass(hull, hull_body, _fins, _wl, rho_in.value, lcg_in.value, kg_in.value, hull_body_z, correct=False)
+    A11 = 0.05 * hs["mass"]
+    A_rot = np.array([am["A44"], am["A55"], am["A66"]])
+    _gmt = hs["kmt"] - kg_in.value
+    roll_period = (2 * np.pi * np.sqrt((I_dry[0] + A_rot[0]) / (hs["mass"] * _g * _gmt))
+                   if _gmt > 0 else float("nan"))
+
+    _rows = [
+        ("Radius of gyration k44 / k55 / k66: uniform solid hull (m)", " / ".join(f"{v:.3f}" for v in k_solid)),
+        ("Radius of gyration k44 / k55 / k66: submerged volume (m)", " / ".join(f"{v:.3f}" for v in k_buoy)),
+        ("Radius of gyration k44 / k55 / k66: assumed ratios (m)", " / ".join(f"{v:.3f}" for v in k_dry)),
+        (f"Dry inertia I44 / I55 / I66 at {_m:.1f} kg (kg.m^2)", " / ".join(f"{v:.2f}" for v in I_dry)),
+        ("Fin 3D factor J: keel / rudder", " / ".join(f"{v:.2f}" for v in am["J"])),
+        ("Sway added mass A22: plain strips -> with 3D correction (kg)", f"{am_strip['A22']:.1f} -> {am['A22']:.1f}"),
+        ("Added mass A11 / A22 / A33 (kg)", f"{A11:.1f} / {am['A22']:.1f} / {am['A33']:.1f}"),
+        ("Added inertia A44 / A55 / A66 (kg.m^2)", " / ".join(f"{v:.2f}" for v in A_rot)),
+        ("Added / dry inertia, roll / pitch / yaw", " / ".join(f"{v:.2f}" for v in A_rot / I_dry)),
+        ("Natural roll period (s)", f"{roll_period:.2f}"),
+    ]
+    mo.ui.table([{"Property": k, "Value": v} for k, v in _rows], selection=None, pagination=False)
+    return
+
+
 if __name__ == "__main__":
     app.run()
