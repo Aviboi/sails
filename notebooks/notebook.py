@@ -391,9 +391,10 @@ def _():
     import shapely
 
 
-    def profile_union(m):
-        """Union of the mesh's triangles projected onto the x-z plane (a shapely geometry)."""
-        t = m.triangles[:, :, [0, 2]]
+    def profile_union(m, axes=(0, 2)):
+        """Union of the mesh's triangles projected onto the plane of two coordinate axes
+        (default x-z, the side view) as a shapely geometry."""
+        t = m.triangles[:, :, list(axes)]
         a = ((t[:, 1, 0] - t[:, 0, 0]) * (t[:, 2, 1] - t[:, 0, 1])
              - (t[:, 1, 1] - t[:, 0, 1]) * (t[:, 2, 0] - t[:, 0, 0]))
         return shapely.union_all(shapely.make_valid(shapely.polygons(t[np.abs(a) > 1e-12])))
@@ -444,7 +445,7 @@ def _():
             fins=[fin_props(f) for f in fins],
         )
 
-    return shapely, underwater_profile
+    return profile_union, shapely, underwater_profile
 
 
 @app.cell
@@ -495,6 +496,67 @@ def _(draft_in, up):
     _ax.set_title("Lateral plane (underwater profile)")
     _ax.legend(loc="upper left")
     _ax.grid(alpha=0.3)
+    _fig
+    return
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    ### Windage and Freeboard
+    The hull above the waterline, upright at the draft set above, projected onto the centerline plane (**side** area, for leeway and the lateral wind force) and onto the transverse plane (**frontal** area, for head-on drag). Centroids are given above the waterline, because their height is the arm of the wind heeling moment. Freeboard is the top of the hull at a station minus the waterline height. Only the hull is counted here, so the rig and any crew or equipment on deck are not.
+    """)
+    return
+
+
+@app.cell
+def _(draft_in, hull, profile_union):
+    air = hull.slice_plane([0, 0, draft_in.value], [0, 0, 1], cap=False)
+    air_side = profile_union(air, (0, 2))
+    air_front = profile_union(air, (1, 2))
+    _x0, _x1 = hull.bounds[0, 0], hull.bounds[1, 0]
+    fb_x = np.linspace(_x0, _x1, 121)[1:-1]
+    fb_top = np.array([np.vstack(hull.section(plane_origin=[x, 0, 0], plane_normal=[1, 0, 0]).discrete)[:, 2].max()
+                       for x in fb_x])
+    fb = fb_top - draft_in.value
+
+
+    def _fb_at(frac):
+        return float(np.interp(_x0 + frac * (_x1 - _x0), fb_x, fb))
+
+
+    _i = int(np.argmin(fb))
+    _rows = [
+        ("Side (lateral) area above waterline (m^2)", air_side.area, ".4f"),
+        ("Side area centroid: x from stern (m)", air_side.centroid.x, ".4f"),
+        ("Side area centroid: height above waterline (m)", air_side.centroid.y - draft_in.value, ".4f"),
+        ("Frontal area above waterline (m^2)", air_front.area, ".4f"),
+        ("Frontal area centroid: height above waterline (m)", air_front.centroid.y - draft_in.value, ".4f"),
+        ("Frontal area centroid: y, + port (m)", air_front.centroid.x, ".4f"),
+        ("Freeboard at 5% / 50% / 95% of length (m)", f"{_fb_at(0.05):.4f} / {_fb_at(0.5):.4f} / {_fb_at(0.95):.4f}", ""),
+        ("Minimum freeboard (m)", f"{fb[_i]:.4f} at x = {fb_x[_i]:.3f} m", ""),
+        ("Highest point above waterline (m)", hull.bounds[1, 2] - draft_in.value, ".4f"),
+    ]
+    mo.ui.table([{"Property": k, "Value": format(v, f) if f else v} for k, v, f in _rows],
+                selection=None, pagination=False)
+    return air_front, air_side
+
+
+@app.cell
+def _(air_front, air_side, draft_in):
+    _fig, _axs = plt.subplots(1, 2, figsize=(10, 3))
+    for _ax, _g, _lab in [(_axs[0], air_side, "x from stern (m)"), (_axs[1], air_front, "y, + port (m)")]:
+        for _p in (_g.geoms if hasattr(_g, "geoms") else [_g]):
+            _ax.fill(*_p.exterior.xy, color="steelblue", alpha=0.6)
+        _ax.axhline(draft_in.value, color="deepskyblue", ls="--", lw=1)
+        _ax.plot(_g.centroid.x, _g.centroid.y, "r+", ms=12, mew=2)
+        _ax.set_aspect("equal")
+        _ax.set_xlabel(_lab)
+        _ax.set_ylabel("z above keel tip (m)")
+        _ax.grid(alpha=0.3)
+    _axs[0].set_title("Side area above waterline")
+    _axs[1].set_title("Frontal area above waterline")
+    _fig.tight_layout()
     _fig
     return
 
