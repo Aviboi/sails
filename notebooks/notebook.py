@@ -6,6 +6,7 @@
 #     "networkx==3.7",
 #     "numpy==2.5.4",
 #     "plotly==7.1.0",
+#     "rtree==1.4.1",
 #     "scipy==1.18.1",
 #     "shapely==2.2.0",
 #     "trimesh==5.2.0",
@@ -42,7 +43,7 @@ def _():
     mo.md(r"""
     ## Geometry Imports
 
-    To start, we import the current CAD geometries as STL files and prepare them for analysis.
+    To start, we import the current CAD geometry as an STL file and prepare it for analysis. The model is a single solid containing the hull, keel and rudder together, so there is one import and one mesh, `hull`. The keel and rudder are part of that mesh, so they count toward displacement, wetted surface and the righting arm.
     """)
     return
 
@@ -71,7 +72,7 @@ def _():
                 ["SolidWorks (Y-up)", "Z-up (as exported)"], value="Z-up (as exported)", label="Export axes"),
             "flip": mo.ui.checkbox(label="Flip bow/stern (rotate 180 deg about vertical)"),
             "center": mo.ui.checkbox(
-                value=center, label="Recenter: x=0 at stern, y=0 on centerline, z=0 at keel"),
+                value=center, label="Recenter: x=0 at stern, y=0 on centerline, z=0 at keel tip"),
         })
 
 
@@ -105,7 +106,7 @@ def _():
 def _():
     mo.md(r"""
     ### Hull Import
-    Imports a 3D model of the hull CAD for analysis.
+    Imports the 3D CAD model of the complete underwater body (hull, keel and rudder in one STL) for analysis. After import the model is placed in the notebook frame (x forward, y to port, z up, metres), with x = 0 at the stern, y = 0 on the centerline and **z = 0 at the keel tip**. Every height in the notebook (waterline height, KG, VCB) is measured up from that point, not from the bottom of the hull shell.
     """)
     return
 
@@ -133,7 +134,7 @@ def _(hull):
         ("Triangles", len(hull.faces)),
         ("Length x (m)", round(_ext[0], 4)),
         ("Beam y (m)", round(_ext[1], 4)),
-        ("Height z (m)", round(_ext[2], 4)),
+        ("Overall height z, keel tip to deck (m)", round(_ext[2], 4)),
         ("Volume (m^3)", round(hull.volume, 5) if hull.is_watertight else "n/a"),
     ]
     mo.vstack([
@@ -167,24 +168,8 @@ def _(hull):
 @app.cell(hide_code=True)
 def _():
     mo.md(r"""
-    ### Keel Import
-    """)
-    return
-
-
-@app.cell(hide_code=True)
-def _():
-    mo.md(r"""
-    ### Rudder Import
-    """)
-    return
-
-
-@app.cell(hide_code=True)
-def _():
-    mo.md(r"""
     ## Hydrostatics
-    Runs hydrostatic calculations on the imported hull geometry.
+    Runs hydrostatic calculations on the imported geometry. The waterline height is measured up from the keel tip, so the keel is wetted first and the hull shell only enters the water higher up. Displaced volume, wetted surface and the centre of buoyancy include the keel and rudder, while the waterplane (area, LWL, BWL, inertias) is whatever the waterline cuts, so it is only the hull shell once the waterline is above the top of the keel and rudder.
     """)
     return
 
@@ -192,7 +177,7 @@ def _():
 @app.cell
 def _():
     draft_in = mo.ui.number(
-        start=0.0, stop=2.0, step=0.005, value=0.174,
+        start=0.0, stop=2.0, step=0.005, value=0.668,
         label="Draft at midship (m above keel)",
     )
     heel_in = mo.ui.number(start=-90, stop=90, step=0.5, value=0.0, label="Heel (deg, + = starboard down)")
