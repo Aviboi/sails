@@ -10,13 +10,13 @@ Engineering calculations for a transatlantic rigid sail (CUSail), kept as a sing
 
 ## Running
 
-The notebook has a PEP 723 dependency header, so it must be opened in sandbox mode or the pinned dependencies are ignored:
+**Always run the notebook in sandbox mode.** It has a PEP 723 dependency header, and without `--sandbox` the pinned dependencies are ignored:
 
 ```
 marimo edit --sandbox notebooks/notebook.py
 ```
 
-Don't edit `notebook.py` on disk while a marimo session is running, because the kernel owns the file and will overwrite it. Make changes through the live session (the `marimo-pair` skill, using `marimo._code_mode`) and let marimo save.
+**Always use the `/marimo-pair` skill** to inspect or change the notebook. Invoke it before touching `notebook.py`, and make changes through the live session (using `marimo._code_mode`), letting marimo save. Don't edit `notebook.py` on disk while a marimo session is running, because the kernel owns the file and will overwrite it.
 
 ## Conventions and architecture
 
