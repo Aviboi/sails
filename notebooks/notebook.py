@@ -437,7 +437,7 @@ def _():
         low = sub.triangles_center[:, 2] < z_bot
         shell = sub.submesh([np.where(~low)[0]], append=True)
         fins = sorted(sub.submesh([np.where(low)[0]], append=True).split(only_watertight=False),
-                      key=lambda f: f.bounds[0, 0])
+                      key=lambda f: -f.bounds[0, 0])  # bow is +x, so descending x is fore to aft
         prof = profile_union(sub)
         return dict(
             sub=sub, profile=prof, shell_wetted=shell.area, total_wetted=sub.area,
@@ -615,7 +615,7 @@ def _(draft_in, half_breadth, hs, hull_body, section_area):
         ("LCB, whole body incl. keel and rudder (% LWL, + fwd)", form["lcb_whole_pct"], "+.2f"),
         ("Half-angle of entrance (deg)", _ie, ".2f"),
     ]], selection=None, pagination=False)
-    return form_sac, form_x
+    return form, form_sac, form_x
 
 
 @app.cell
@@ -825,7 +825,7 @@ def _(dfy_in, dfz_in, gz_draft, gz_heel, gz_val, mass_in):
         ("GZ area within usable range (m.rad)", _fmt(_area_use, ".4f")),
     ]
     mo.ui.table([{"Property": k, "Value": v} for k, v in _rows], selection=None, pagination=False)
-    return avs_angle, df_angle
+    return avs_angle, df_angle, use_angle
 
 
 @app.cell
@@ -1102,6 +1102,557 @@ def _(
         mo.ui.table([{"Property": k, "Value": v} for k, v in _rows], selection=None, pagination=False),
         _fig,
     ])
+    return (mast_step,)
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    # Sail Design
+
+    With the hull characterised, the remaining sections design the rigid sail and check it against the hull. Each section below will be filled in turn, and each one feeds the next.
+
+    1. **Environment and Constraints:** wind and air properties, the crossing target, and the limits the design must respect.
+    2. **Hydrodynamic Forces:** hull resistance against speed, and keel and rudder lift and drag with leeway.
+    3. **Wing-Sail Aerodynamics:** section data, finite-span corrections, flap or tail control, centre of effort.
+    4. **Force Balance and Heel:** sail force against hydrodynamic force, equilibrium speed, heel and helm over points of sail.
+    5. **Structural Loads:** mast and step load cases from the design and survival winds.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    ## Environment and Constraints
+    The conditions the rig must work in, the crossing it must achieve, and the limits it must respect. Every value here is a **placeholder** to be replaced once the real mission and weight budget exist.
+
+    ### Wind and Air
+    True wind is given at a reference height as a power-law profile, `V(z) = V_ref (z / z_ref)^alpha`, with `alpha` about 0.11 over open sea. Three wind states bound the design: a **minimum** at which the boat should still make way, a **design** wind that sets the sail area and balance, and a **survival** wind for the structural check. Air density follows the ideal gas law from temperature and pressure, and dynamic pressure is `q = rho V^2 / 2`.
+    """)
+    return
+
+
+@app.cell
+def _():
+    air_temp_in = mo.ui.number(start=-10, stop=40, step=0.5, value=15.0, label="Air temperature (deg C)")
+    pressure_in = mo.ui.number(start=950, stop=1050, step=1, value=1013, label="Pressure (hPa)")
+    zref_in = mo.ui.number(start=2.0, stop=20.0, step=0.5, value=10.0, label="Wind reference height z_ref (m)")
+    alpha_in = mo.ui.number(start=0.05, stop=0.3, step=0.01, value=0.11, label="Shear exponent alpha")
+    vmin_in = mo.ui.number(start=1, stop=30, step=0.5, value=6.0, label="Minimum wind (kn)")
+    vdes_in = mo.ui.number(start=1, stop=40, step=0.5, value=15.0, label="Design wind (kn)")
+    vsurv_in = mo.ui.number(start=10, stop=100, step=1, value=45.0, label="Survival wind (kn)")
+    mo.vstack([
+        mo.hstack([air_temp_in, pressure_in, zref_in, alpha_in], justify="start"),
+        mo.hstack([vmin_in, vdes_in, vsurv_in], justify="start"),
+    ])
+    return (
+        air_temp_in,
+        alpha_in,
+        pressure_in,
+        vdes_in,
+        vmin_in,
+        vsurv_in,
+        zref_in,
+    )
+
+
+@app.cell
+def _(
+    air_temp_in,
+    airdraft_in,
+    alpha_in,
+    pressure_in,
+    vdes_in,
+    vmin_in,
+    vsurv_in,
+    zref_in,
+):
+    KNOT = 0.514444  # m/s per knot
+
+
+    def wind_at(z, v_ref, z_ref, alpha):
+        """Power-law wind speed (m/s) at height z (m) above the waterline, given v_ref (m/s) at z_ref."""
+        return v_ref * (np.maximum(z, 0.1) / z_ref) ** alpha
+
+
+    rho_air = pressure_in.value * 100.0 / (287.05 * (air_temp_in.value + 273.15))
+    wind_states = {
+        "Minimum": vmin_in.value * KNOT,
+        "Design": vdes_in.value * KNOT,
+        "Survival": vsurv_in.value * KNOT,
+    }
+
+    _top = airdraft_in.value
+    _rows = []
+    for _name, _v in wind_states.items():
+        _vt = float(wind_at(_top, _v, zref_in.value, alpha_in.value))
+        _rows.append({
+            "State": _name,
+            "V at z_ref (m/s)": f"{_v:.2f}",
+            f"V at rig top, {_top:.1f} m (m/s)": f"{_vt:.2f}",
+            "q at rig top (Pa)": f"{0.5 * rho_air * _vt**2:.1f}",
+        })
+
+    _z = np.linspace(0.1, _top, 60)
+    _fig, _ax = plt.subplots(figsize=(5, 3.2))
+    for _name, _v in wind_states.items():
+        _ax.plot(wind_at(_z, _v, zref_in.value, alpha_in.value) / KNOT, _z, label=_name)
+    _ax.set_xlabel("Wind speed (kn)")
+    _ax.set_ylabel("Height above waterline (m)")
+    _ax.grid(alpha=0.3)
+    _ax.legend()
+    mo.vstack([
+        mo.md(f"Air density: **{rho_air:.4f} kg/m^3**"),
+        mo.ui.table(_rows, selection=None, pagination=False),
+        _fig,
+    ])
+    return (KNOT,)
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    ### Crossing Target and Design Limits
+    The required average speed follows from the distance and the time allowed. The limits below are the acceptance criteria for later sections: the steady heel at the design wind must stay under `max heel`, which itself must sit inside the usable stability range; the sail's centre of effort must stay within `max lead` of the centre of lateral resistance (as a fraction of LWL) to hold helm in check; and the rig must fit under the air-draft limit with a mass no greater than `max rig mass`.
+    """)
+    return
+
+
+@app.cell
+def _():
+    dist_in = mo.ui.number(start=100, stop=6000, step=50, value=3000, label="Crossing distance (nm)")
+    days_in = mo.ui.number(start=5, stop=120, step=1, value=40, label="Time allowed (days)")
+    maxheel_in = mo.ui.number(start=5, stop=60, step=1, value=25, label="Max steady heel (deg)")
+    maxlead_in = mo.ui.number(start=0.0, stop=0.3, step=0.005, value=0.10, label="Max CE-CLP lead (fraction of LWL)")
+    maxrig_in = mo.ui.number(start=0.0, stop=500, step=1, value=25, label="Max rig mass (kg)")
+    mo.vstack([
+        mo.hstack([dist_in, days_in], justify="start"),
+        mo.hstack([maxheel_in, maxlead_in, maxrig_in], justify="start"),
+    ])
+    return days_in, dist_in, maxheel_in, maxlead_in, maxrig_in
+
+
+@app.cell
+def _(
+    KNOT,
+    airdraft_in,
+    days_in,
+    dist_in,
+    draft_in,
+    gz_heel,
+    hs,
+    mass_in,
+    mast_step,
+    maxheel_in,
+    maxlead_in,
+    maxrig_in,
+    use_angle,
+    vdes_in,
+    vsurv_in,
+):
+    v_req = dist_in.value / (days_in.value * 24.0)  # required average speed, kn
+    _rig_h = draft_in.value + airdraft_in.value - mast_step[2]
+    _heel_cap = use_angle if use_angle is not None else gz_heel[-1]
+    _lwl = hs["wp"]["lwl"]
+    _rows = [
+        ("Required average speed (kn)", f"{v_req:.2f}", f"{v_req * KNOT:.2f} m/s"),
+        ("Required Froude number v / sqrt(g LWL)",
+         f"{v_req * KNOT / np.sqrt(9.80665 * _lwl):.3f}", ""),
+        ("Max steady heel (deg)", f"{maxheel_in.value:.1f}",
+         f"usable range ends at {_heel_cap:.1f} deg: " + ("OK" if maxheel_in.value < _heel_cap else "EXCEEDS")),
+        ("Max CE-CLP lead (m)", f"{maxlead_in.value * _lwl:.3f}",
+         f"{maxlead_in.value:.0%} of LWL {_lwl:.3f} m"),
+        ("Rig height available above step (m)", f"{_rig_h:.3f}", "from the air-draft limit"),
+        ("Max rig mass (kg)", f"{maxrig_in.value:.1f}", f"{maxrig_in.value / mass_in.value:.0%} of total mass"),
+        ("Design / survival wind (kn)", f"{vdes_in.value:.1f} / {vsurv_in.value:.1f}", ""),
+    ]
+    mo.ui.table(
+        [{"Constraint": a, "Value": b, "Note": c} for a, b, c in _rows],
+        selection=None, pagination=False,
+    )
+    return (v_req,)
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    ## Hydrodynamic Forces
+    The water-side forces the sail has to balance: resistance against speed, and the side force the keel and rudder can produce as the boat makes leeway. Both are built from the underwater geometry already measured above, and both are written as functions (`calm_resistance`, `appendage_side_force`) so the force-balance section can call them at any speed and leeway.
+
+    ### Calm-Water Resistance
+    Resistance is split into components that add at each speed `V`, with Froude number `Fn = V / sqrt(g LWL)`.
+
+    - **Hull friction:** the ITTC-1957 line `Cf = 0.075 / (log10 Re - 2)^2` with `Re = V L / nu`, plus a roughness allowance `dCf`, acting on the wetted area of the hull shell.
+    - **Hull form factor:** `1 + k` from the Holtrop-Mennen regression (no transom term), which raises the friction to account for the hull's pressure drag due to viscosity. It is an estimate for a conventional displacement hull, so check its value.
+    - **Appendages:** the keel and rudder are flat-plate friction at their own chord Reynolds number, times a section thickness factor `1 + 2 t/c + 60 (t/c)^4`.
+
+    - **Wave-making:** Michell's thin-ship integral over the hull offsets, in the next subsection.
+
+    `total_resistance` adds the three components. The result is for the upright, untrimmed hull at the set draft, with no allowance for sea state, wind-wave added resistance or appendage interference.
+    """)
+    return
+
+
+@app.cell
+def _():
+    nu_in = mo.ui.number(start=0.8e-6, stop=1.8e-6, step=0.01e-6, value=1.19e-6, label="Water kinematic viscosity (m^2/s; 1.19e-6 sea water at 15 deg C)")
+    dcf_in = mo.ui.number(start=0.0, stop=0.001, step=0.0001, value=0.0003, label="Roughness allowance dCf")
+    vmax_in = mo.ui.number(start=2, stop=15, step=0.5, value=6.0, label="Max speed shown (kn)")
+    mo.hstack([nu_in, dcf_in, vmax_in], justify="start")
+    return dcf_in, nu_in, vmax_in
+
+
+@app.cell
+def _(KNOT, dcf_in, form, hs, nu_in, rho_in, up, v_req, vmax_in):
+    G = 9.80665
+
+
+    def cf_ittc(re):
+        """ITTC-1957 model-ship correlation line."""
+        return 0.075 / (np.log10(re) - 2.0) ** 2
+
+
+    # Holtrop-Mennen form factor 1 + k1 for the bare hull shell (no transom term)
+    _L, _B, _T = form["lwl"], hs["wp"]["bwl"], hs["draft_true"]
+    _cp, _lcb = form["cp"], form["lcb_pct"]
+    _Lr = _L * (1 - _cp + 0.06 * _cp * _lcb / (4 * _cp - 1))
+    hull_form_factor = 0.93 + (_T / _L) ** 0.2228446 * (_B / _Lr) ** 0.92497 * (
+        (0.95 - _cp) ** -0.521448) * (1 - _cp + 0.0225 * _lcb) ** 0.6906
+
+
+    def calm_resistance(V, hull_wetted, fins, rho, nu, dcf):
+        """Viscous resistance (N) of the hull shell and of the fins, at speeds V (m/s).
+
+        Returns (hull, fins) as arrays, each the sum over its parts. Wave-making is not included.
+        """
+        V = np.asarray(V, dtype=float)
+        q = 0.5 * rho * V**2
+        hull_r = q * hull_wetted * hull_form_factor * (cf_ittc(V * form["lwl"] / nu) + dcf)
+        fin_r = np.zeros_like(V)
+        for f in fins:
+            tc = f["tc_max"]
+            fin_r += q * f["wetted"] * (cf_ittc(V * f["mean_chord"] / nu) + dcf) * (1 + 2 * tc + 60 * tc**4)
+        return hull_r, fin_r
+
+
+    _kn = np.linspace(0.25, vmax_in.value, 50)
+    _V = _kn * KNOT
+    _h, _f = calm_resistance(_V, up["shell_wetted"], up["fins"], rho_in.value, nu_in.value, dcf_in.value)
+    _vr = v_req * KNOT
+    _hr, _fr = calm_resistance(_vr, up["shell_wetted"], up["fins"], rho_in.value, nu_in.value, dcf_in.value)
+
+    _rows = []
+    for _k in np.arange(1, vmax_in.value + 1e-9):
+        _v = _k * KNOT
+        _a, _b = calm_resistance(_v, up["shell_wetted"], up["fins"], rho_in.value, nu_in.value, dcf_in.value)
+        _rows.append({
+            "V (kn)": f"{_k:.0f}", "Fn": f"{_v / np.sqrt(G * form['lwl']):.3f}",
+            "Re (hull)": f"{_v * form['lwl'] / nu_in.value:.2e}",
+            "Hull (N)": f"{float(_a):.2f}", "Fins (N)": f"{float(_b):.2f}", "Total (N)": f"{float(_a + _b):.2f}",
+        })
+
+    _fig, _ax = plt.subplots(figsize=(7, 3.4))
+    _ax.stackplot(_kn, _h, _f, labels=["hull friction + form", "keel + rudder friction"], alpha=0.7)
+    _ax.plot([v_req], [float(_hr + _fr)], "k^", ms=9, label=f"required speed, {float(_hr + _fr):.1f} N")
+    _ax.set_xlabel("Speed (kn)")
+    _ax.set_ylabel("Viscous resistance (N)")
+    _ax.grid(alpha=0.3)
+    _ax.legend(loc="upper left")
+    mo.vstack([
+        mo.md(
+            f"Hull form factor **1 + k = {hull_form_factor:.3f}**, "
+            f"hull shell wetted area **{up['shell_wetted']:.3f} m^2**, "
+            f"appendage wetted area **{sum(f['wetted'] for f in up['fins']):.3f} m^2**. "
+            f"At the required {v_req:.2f} kn: Fn = {_vr / np.sqrt(G * form['lwl']):.3f}, "
+            f"viscous resistance **{float(_hr + _fr):.2f} N** (wave-making excluded)."
+        ),
+        mo.ui.table(_rows, selection=None, pagination=False),
+        _fig,
+    ])
+    return G, calm_resistance
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    ### Wave-Making Resistance (Michell)
+    Michell's thin-ship integral gives the wave resistance of a slender body from its offsets alone. With half-breadth `b(x, z)` (the full underwater body, so the keel and rudder are included), `k0 = g / V^2` and `lambda = sec(theta)` the angle of each wave component,
+
+    `R_w = (4 rho k0^2 V^2 / pi) * integral from 1 to inf of (I^2 + J^2) lambda^2 / sqrt(lambda^2 - 1) d lambda`, with `I + iJ = integral of (db/dx) exp(k0 lambda^2 z + i k0 lambda x) dx dz`
+
+    taken over the body below the waterline (`z <= 0`). Substituting `lambda = cosh u` removes the singularity at `lambda = 1`. The offsets are sampled on a grid, treated as piecewise linear, and the exponential weights are integrated exactly over each cell, so the result does not depend on how fine the vertical grid is relative to the wave decay depth.
+
+    The implementation was checked on a Wigley hull, where it converges with grid and integration limits and shows the known humps and hollows near `Fn` = 0.3, 0.35 and 0.5. **It is still thin-ship theory.** It assumes small hull slopes, ignores viscosity, sinkage and trim, and is known to overpredict the humps and miss the hollows between them for real hulls. It also assumes the hull is upright at the draft set above.
+
+    **The transom needs a decision.** Taken literally, the blunt stern is a vertical wall that the theory sees as a strong wave maker, even at speeds where the real transom is dry. The **transom fairing length** therefore extends the stern aft as a linear taper to zero beam, standing in for the hollow a dry transom leaves in the wake. The result is sensitive to it, so the plot shades the range from no fairing to a 0.45 m fairing. Use the result for the trend with speed rather than for exact values.
+    """)
+    return
+
+
+@app.cell
+def _(Polygon, draft_in, form, hs, hull, reduce, shapely):
+    def michell_offsets(body, wl, nx=80, nz=30):
+        """Half-breadth grid b[i, j] of `body` below the waterline wl, at stations x[i] and heights z[j] (relative to wl)."""
+        sub = body.slice_plane([0, 0, wl], [0, 0, -1], cap=True)
+        x = np.linspace(sub.bounds[0, 0], sub.bounds[1, 0], nx)
+        z = np.linspace(sub.bounds[0, 2], wl, nz) - wl
+        zq = z + wl
+        zq[-1] -= 1e-4  # sample just below the waterline cap
+        b = np.zeros((nx, nz))
+        for i in range(1, nx - 1):
+            sec = sub.section(plane_origin=[x[i], 0, 0], plane_normal=[1, 0, 0])
+            if sec is None:
+                continue
+            loops = [Polygon(p[:, [1, 2]]) for p in sec.discrete if len(p) >= 3]
+            poly = reduce(lambda a, c: a.symmetric_difference(c), loops)  # even-odd, as for the waterplane
+            if not poly.is_valid:
+                poly = shapely.make_valid(poly)
+            ymax = np.abs(np.vstack(sec.discrete)[:, 1]).max() + 1.0
+            lines = np.empty((nz, 2, 2))
+            lines[:, 0, 0], lines[:, 1, 0] = -ymax, ymax
+            lines[:, :, 1] = zq[:, None]
+            b[i] = shapely.length(shapely.intersection(poly, shapely.linestrings(lines))) / 2
+        b[:, 0] = 0.0  # closed at the keel tip, bow and stern
+        return x, z, b
+
+
+    mich_x, mich_z, mich_b = michell_offsets(hull, draft_in.value)
+    _slope = np.abs(np.gradient(mich_b, mich_x, axis=0)).max()
+    mo.md(
+        f"Offset grid: {len(mich_x)} stations by {len(mich_z)} levels. Largest hull slope |db/dx| = **{_slope:.2f}** "
+        f"(thin-ship theory wants this well under 1; the blunt transom face is what makes it large), beam / length = {hs['wp']['bwl'] / form['lwl']:.2f}."
+    )
+    return mich_b, mich_x, mich_z
+
+
+@app.cell
+def _():
+    taper_in = mo.ui.number(start=0.0, stop=1.0, step=0.05, value=0.2, label="Transom fairing length (m)")
+    taper_in
+    return (taper_in,)
+
+
+@app.cell
+def _(
+    G,
+    KNOT,
+    calm_resistance,
+    dcf_in,
+    form,
+    mich_b,
+    mich_x,
+    mich_z,
+    nu_in,
+    rho_in,
+    taper_in,
+    up,
+    v_req,
+    vmax_in,
+):
+    def hat_weights(nodes, a):
+        """Weights w[k, i] with  integral f(s) exp(a[k] s) ds  =  sum_i w[k, i] f(nodes[i])  for f linear between
+        the uniformly spaced nodes. a may be complex with Re(a) >= 0; each cell is integrated exactly."""
+        a = np.asarray(a, dtype=complex)[:, None]
+        h = nodes[1] - nodes[0]
+        s = a * h
+        small = np.abs(s) < 0.05  # series where the closed form cancels
+        ss = np.where(small, 1.0, s)
+        em = np.exp(-ss)
+        p1 = np.where(small, 0.5 - s / 3 + s**2 / 8, (1 - em * (1 + ss)) / ss**2)
+        p2 = np.where(small, 0.5 - s / 6 + s**2 / 24, (ss - 1 + em) / ss**2)
+        e = np.exp(a * nodes[1:][None, :])
+        w = np.zeros((a.shape[0], len(nodes)), dtype=complex)
+        w[:, :-1] += e * h * p1
+        w[:, 1:] += e * h * p2
+        return w
+
+
+    def fair_blunt_end(x, b, length):
+        """Extend the blunter end of the offsets by `length` m, shrinking its last section linearly to zero.
+
+        A transom runs dry once the boat is moving, so the water sees a hull that continues aft as a hollow in
+        the wake. Fairing the offsets this way stands in for that. A pointed end (under 5% of the maximum
+        half-breadth) is left alone, as is length 0.
+        """
+        n = int(round(length / (x[1] - x[0])))
+        dx = x[1] - x[0]
+        hi, lo = b[-2], b[1]
+        if n == 0 or max(hi.max(), lo.max()) < 0.05 * b.max():
+            return x, b
+        k = np.arange(1, n + 2)
+        if hi.max() >= lo.max():
+            return (np.concatenate([x[:-1], x[-2] + dx * k]),
+                    np.vstack([b[:-1], np.outer(1 - k / (n + 1), hi)]))
+        k = k[::-1]
+        return (np.concatenate([x[1] - dx * k, x[1:]]),
+                np.vstack([np.outer(1 - k / (n + 1), lo), b[1:]]))
+
+
+    def michell_wave_resistance(V, x, z, b, rho, n_u=2500, u_max=4.0):
+        """Michell thin-ship wave resistance (N) at speed V (m/s) for half-breadths b[x, z] (z <= 0 at the waterline)."""
+        k0 = G / V**2
+        u = np.linspace(0.0, u_max, n_u)
+        lam = np.cosh(u)
+        kap = k0 * lam
+        wx = hat_weights(x, 1j * kap)
+        wz = hat_weights(z, k0 * lam**2).real
+        amp = -1j * kap * np.einsum("ui,ij,uj->u", wx, b, wz)  # I + iJ, with integration by parts in x
+        return 4 * rho * k0**2 * V**2 / np.pi * np.trapezoid(np.abs(amp) ** 2 * lam**2, u)
+
+
+    mich_xf, mich_bf = fair_blunt_end(mich_x, mich_b, taper_in.value)
+
+
+    def total_resistance(V, hull_wetted, fins, rho, nu, dcf, wave_grid=None):
+        """Calm-water resistance (N) at speeds V (m/s): returns (hull viscous, fin viscous, wave) arrays.
+
+        The wave term uses the faired offsets unless another (x, b) grid is passed as `wave_grid`.
+        """
+        V = np.atleast_1d(np.asarray(V, dtype=float))
+        xw, bw = wave_grid if wave_grid is not None else (mich_xf, mich_bf)
+        hull_r, fin_r = calm_resistance(V, hull_wetted, fins, rho, nu, dcf)
+        wave = np.array([michell_wave_resistance(v, xw, mich_z, bw, rho) for v in V])
+        return hull_r, fin_r, wave
+
+
+    _kn = np.linspace(0.5, vmax_in.value, 50)
+    _args = (up["shell_wetted"], up["fins"], rho_in.value, nu_in.value, dcf_in.value)
+    _h, _f, _w = total_resistance(_kn * KNOT, *_args)
+    _hr, _fr, _wr = (float(a[0]) for a in total_resistance(v_req * KNOT, *_args))
+    R_req = _hr + _fr + _wr  # total calm-water resistance at the required speed
+
+    # spread from the transom treatment: unfaired (upper) and a long 0.45 m fairing (lower)
+    _w_raw = total_resistance(_kn * KNOT, *_args, wave_grid=(mich_x, mich_b))[2]
+    _w_long = total_resistance(_kn * KNOT, *_args, wave_grid=fair_blunt_end(mich_x, mich_b, 0.45))[2]
+    _band = lambda v: tuple(float(total_resistance(v_req * KNOT, *_args, wave_grid=g)[2][0])
+                            for g in ((mich_x, mich_b), fair_blunt_end(mich_x, mich_b, 0.45)))
+    _wr_raw, _wr_long = _band(v_req)
+
+    _rows = []
+    for _k in np.arange(1, vmax_in.value + 1e-9):
+        _a, _b, _c = (float(r[0]) for r in total_resistance(_k * KNOT, *_args))
+        _rows.append({
+            "V (kn)": f"{_k:.0f}", "Fn": f"{_k * KNOT / np.sqrt(G * form['lwl']):.3f}",
+            "Viscous (N)": f"{_a + _b:.2f}", "Wave (N)": f"{_c:.2f}", "Total (N)": f"{_a + _b + _c:.2f}",
+            "Wave / total": f"{_c / (_a + _b + _c):.0%}",
+        })
+
+    _fig, _axs = plt.subplots(1, 2, figsize=(11, 3.6))
+    _axs[0].stackplot(_kn, _h, _f, _w, labels=["hull friction + form", "keel + rudder friction", "wave-making (Michell)"], alpha=0.7)
+    _axs[0].plot([v_req], [R_req], "k^", ms=9, label=f"required speed, {R_req:.1f} N")
+    _axs[0].set_ylabel("Calm-water resistance (N)")
+    _axs[0].legend(loc="upper left", fontsize=8)
+    _axs[1].plot(_kn, _w, color="C2", label=f"faired {taper_in.value:.2f} m")
+    _axs[1].fill_between(_kn, _w_long, _w_raw, color="C2", alpha=0.2, label="unfaired to 0.45 m fairing")
+    _axs[1].axvline(v_req, color="gray", ls=":", lw=1)
+    _axs[1].set_ylabel("Wave resistance (N)")
+    _axs[1].legend(loc="upper left", fontsize=8)
+    for _ax in _axs:
+        _ax.set_xlabel("Speed (kn)")
+        _ax.grid(alpha=0.3)
+    mo.vstack([
+        mo.md(
+            f"At the required {v_req:.2f} kn: viscous **{_hr + _fr:.2f} N**, wave-making **{_wr:.2f} N**, "
+            f"total **{R_req:.2f} N** (`R_req`). Wave-making ranges from {_wr_long:.1f} N (0.45 m fairing) "
+            f"to {_wr_raw:.1f} N (unfaired transom) depending on how the stern is treated."
+        ),
+        mo.ui.table(_rows, selection=None, pagination=False),
+        _fig,
+    ])
+    return
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    ### Keel and Rudder Side Force
+    With the boat making leeway angle `lambda`, the keel and rudder (rudder fixed at zero deflection) work as lifting surfaces. Their lift slope comes from Helmbold's low-aspect-ratio formula,
+
+    `CL_alpha = 2 pi AR_e / (2 + sqrt(4 + AR_e^2))` per radian, with `CL = CL_alpha lambda` and induced drag `CDi = CL^2 / (pi AR_e)`,
+
+    where `AR_e` is the geometric aspect ratio times an **end-plate factor**. The hull and free surface act as an end plate that raises the effective aspect ratio towards twice the geometric value, so 1.0 is the conservative end and 2.0 the optimistic one. The hull's own side force is ignored, and the fins are taken as unstalled (keep leeway under about 10 degrees).
+    """)
+    return
+
+
+@app.cell
+def _():
+    arf_in = mo.ui.number(start=1.0, stop=2.0, step=0.05, value=1.3, label="End-plate factor on aspect ratio")
+    arf_in
+    return (arf_in,)
+
+
+@app.cell
+def _(KNOT, arf_in, rho_in, up, v_req):
+    def appendage_side_force(V, leeway_deg, fins, rho, ar_factor):
+        """Side force Y (N) and induced drag Di (N) of the fins at speed V (m/s) and leeway (deg).
+
+        Y acts to windward of the boat, opposing the sail's side force; Di adds to the resistance.
+        """
+        V, a = np.broadcast_arrays(np.asarray(V, dtype=float), np.radians(leeway_deg))
+        q = 0.5 * rho * V**2
+        Y, Di = np.zeros_like(q), np.zeros_like(q)
+        for f in fins:
+            ar = ar_factor * f["aspect_ratio"]
+            cl = 2 * np.pi * ar / (2 + np.sqrt(4 + ar**2)) * a
+            Y += q * f["planform"] * cl
+            Di += q * f["planform"] * cl**2 / (np.pi * ar)
+        return Y, Di
+
+
+    _rows = []
+    for _name, _f in zip(("Keel", "Rudder"), up["fins"]):
+        _ar = arf_in.value * _f["aspect_ratio"]
+        _s = 2 * np.pi * _ar / (2 + np.sqrt(4 + _ar**2))
+        _y, _ = appendage_side_force(v_req * KNOT, 1.0, [_f], rho_in.value, arf_in.value)
+        _rows.append({
+            "Fin": _name, "Planform (m^2)": f"{_f['planform']:.4f}",
+            "Geometric AR": f"{_f['aspect_ratio']:.2f}", "Effective AR": f"{_ar:.2f}",
+            "CL_alpha (1/deg)": f"{_s * np.pi / 180:.4f}",
+            f"Side force per deg at {v_req:.2f} kn (N)": f"{float(_y):.2f}",
+        })
+
+    _lee = np.linspace(0, 10, 41)
+    _fig, _axs = plt.subplots(1, 2, figsize=(10, 3.4))
+    for _k in (2, 3, 4, 5):
+        _y, _d = appendage_side_force(_k * KNOT, _lee, up["fins"], rho_in.value, arf_in.value)
+        _axs[0].plot(_lee, _y, label=f"{_k} kn")
+        _axs[1].plot(_lee, _d, label=f"{_k} kn")
+    _axs[0].set_ylabel("Fin side force (N)")
+    _axs[1].set_ylabel("Induced drag (N)")
+    for _ax in _axs:
+        _ax.set_xlabel("Leeway (deg)")
+        _ax.grid(alpha=0.3)
+        _ax.legend()
+    mo.vstack([mo.ui.table(_rows, selection=None, pagination=False), _fig])
+    return
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    ## Wing-Sail Aerodynamics
+    _To do:_ section data (Cl, Cd, Cm against angle of attack at the right Reynolds number), finite-span corrections, flap or tail control, and the centre of effort against the mast step and CLP.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    ## Force Balance and Heel
+    _To do:_ sail force against hydrodynamic force over the points of sail, equilibrium speed, heel and helm, checked against the limits above.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    ## Structural Loads
+    _To do:_ mast and step load cases from the design and survival winds, and the resulting rig mass estimate.
+    """)
     return
 
 
