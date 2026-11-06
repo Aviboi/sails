@@ -1,12 +1,21 @@
-# Transatlantic Sail PDR: calculation and decision package
+# Transatlantic Sail: calculations
 
 **CUSail · Sails subsystem · Avram Dreyer**
 
-This folder is the complete, self-contained record of how the transatlantic rigid sail was sized and placed. Nothing outside it is needed to review or reproduce the work.
+Engineering calculations for the transatlantic rigid sail, kept as a single [marimo](https://marimo.io) notebook. The notebook is both the calculation and its documentation, so the same code is used to find results and to present them.
+
+## Repository layout
+- `notebooks/notebook.py`: the marimo notebook (hull import, hydrostatics, GZ curve).
+- `data/`: STL geometry used by the notebook (currently `Hull Form.STL`).
 
 ## Running the notebook
-- Python 3.9+ with `marimo`, `numpy`, `matplotlib`, `scipy`, `pandas` and `ipython` (notebook 4 also needs `neuralfoil`): `pip install marimo numpy matplotlib scipy pandas ipython neuralfoil`
-- Run `marimo edit notebooks/2_Calculations.py` from inside `notebooks/` 
+Requires Python 3.9+ and [`uv`](https://docs.astral.sh/uv/) or `pip` with `marimo`. The notebook has an inline (PEP 723) dependency header, so open it in sandbox mode to get the pinned dependencies (marimo, numpy, scipy, matplotlib, plotly, shapely, trimesh, networkx, mapbox-earcut):
 
-## Notebooks
-The notebooks are marimo `.py` files. 
+```
+marimo edit --sandbox notebooks/notebook.py
+```
+
+## Notes
+- Coordinates: x forward (bow +x), y to port, z up, metres. Imported STLs are converted into this frame.
+- Meshes must be watertight for volume and centroid results to be valid; the notebook warns when they aren't.
+- Keel and rudder geometry sections are still placeholders.
