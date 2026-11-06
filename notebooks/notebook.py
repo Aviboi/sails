@@ -47,45 +47,6 @@ def _():
     return
 
 
-@app.cell(hide_code=True)
-def _():
-    mo.md(r"""
-    ### Hull Import
-    Imports a 3D model of the hull CAD for analysis.
-    """)
-    return
-
-
-@app.cell
-def _():
-    stl_file = mo.ui.file(filetypes=[".stl"], label="Upload hull STL")
-    DEFAULT_STL = mo.notebook_dir().parent / "data" / "Hull Form.STL"
-    stl_path = mo.ui.text(
-        value=str(DEFAULT_STL), label="...or path to STL", full_width=True
-    )
-    units = mo.ui.dropdown(
-        {"mm": 0.001, "cm": 0.01, "m": 1.0, "in": 0.0254},
-        value="mm",
-        label="STL units",
-    )
-    axes = mo.ui.dropdown(
-        ["SolidWorks (Y-up)", "Z-up (as exported)"],
-        value="Z-up (as exported)",
-        label="Export axes",
-    )
-    flip_bow = mo.ui.checkbox(label="Flip bow/stern (rotate 180 deg about vertical)")
-    recenter = mo.ui.checkbox(
-        value=True, label="Recenter: x=0 at stern, y=0 on centerline, z=0 at keel"
-    )
-    mo.vstack([
-        mo.hstack([stl_file, stl_path], justify="start", align="end"),
-        mo.hstack([units, axes], justify="start"),
-        flip_bow,
-        recenter,
-    ])
-    return axes, flip_bow, recenter, stl_file, stl_path, units
-
-
 @app.cell
 def _():
     # Target convention: x forward (bow +x), y to port, z up, metres.
@@ -97,41 +58,69 @@ def _():
     ], dtype=float)  # proper rotation (+90 deg about x), no mirroring
 
 
-    def load_hull(data, scale, sw_yup, flip, center):
-        """Load STL bytes into a trimesh in x-fwd / y-port / z-up metres."""
+    def geometry_form(name, filename, center=True):
+        """One UI element holding every import setting for an STL."""
+        return mo.ui.dictionary({
+            "file": mo.ui.file(filetypes=[".stl"], label=f"Upload {name} STL"),
+            "path": mo.ui.text(
+                value=str(mo.notebook_dir().parent / "data" / filename),
+                label="...or path to STL", full_width=True),
+            "units": mo.ui.dropdown(
+                {"mm": 0.001, "cm": 0.01, "m": 1.0, "in": 0.0254}, value="mm", label="STL units"),
+            "axes": mo.ui.dropdown(
+                ["SolidWorks (Y-up)", "Z-up (as exported)"], value="Z-up (as exported)", label="Export axes"),
+            "flip": mo.ui.checkbox(label="Flip bow/stern (rotate 180 deg about vertical)"),
+            "center": mo.ui.checkbox(
+                value=center, label="Recenter: x=0 at stern, y=0 on centerline, z=0 at keel"),
+        })
+
+
+    def load_geometry(form):
+        """Load the STL chosen in `form` as a trimesh in x-fwd / y-port / z-up metres."""
+        v = form.value
+        if v["file"]:
+            data = form["file"].contents()
+        elif v["path"].strip():
+            data = pathlib.Path(v["path"].strip().strip('"')).read_bytes()
+        else:
+            return None
         mesh = trimesh.load(io.BytesIO(data), file_type="stl", force="mesh")
-        mesh.apply_scale(scale)
-        if sw_yup:
+        mesh.apply_scale(v["units"])
+        if v["axes"].startswith("SolidWorks"):
             mesh.apply_transform(_SW_YUP_TO_ZUP)
-        if flip:
+        if v["flip"]:
             mesh.apply_transform(trimesh.transformations.rotation_matrix(np.pi, [0, 0, 1]))
         if mesh.is_watertight and mesh.volume < 0:
             trimesh.repair.fix_inversion(mesh)  # inside-out normals
-        if center:
+        if v["center"]:
             lo, hi = mesh.bounds
             mesh.apply_translation([-lo[0], -(lo[1] + hi[1]) / 2, -lo[2]])
         return mesh
 
-    return (load_hull,)
+
+    return geometry_form, load_geometry
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    ### Hull Import
+    Imports a 3D model of the hull CAD for analysis.
+    """)
+    return
 
 
 @app.cell
-def _(axes, flip_bow, load_hull, recenter, stl_file, stl_path, units):
-    if stl_file.value:
-        _data = stl_file.contents()
-    elif stl_path.value.strip():
-        _data = pathlib.Path(stl_path.value.strip().strip('"')).read_bytes()
-    else:
-        _data = None
-    mo.stop(_data is None, mo.callout("Upload an STL or enter a path to begin.", kind="info"))
+def _(geometry_form):
+    hull_form = geometry_form("hull", "Hull Form.STL")
+    hull_form
+    return (hull_form,)
 
-    hull = load_hull(
-        _data,
-        scale=units.value,
-        sw_yup=axes.value.startswith("SolidWorks"),
-        flip=flip_bow.value,
-        center=recenter.value,
-    )
+
+@app.cell
+def _(hull_form, load_geometry):
+    hull = load_geometry(hull_form)
+    mo.stop(hull is None, mo.callout("Upload an STL or enter a path to begin.", kind="info"))
     return (hull,)
 
 
