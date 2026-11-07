@@ -1,6 +1,6 @@
 # Overview of `notebooks/notebook.py` (2933 lines)
 
-The notebook runs in one chain. It imports a hull STL and computes hydrostatics, stability and added mass. Then it designs a wing sail, balances sail force against hull force, sizes the structure and motor, and ends with a pass/fail summary.
+The notebook runs in one chain. It imports a hull STL and computes hydrostatics and stability. Then it designs a wing sail, balances sail force against hull force, sizes the structure and motor, and ends with a pass/fail summary.
 
 ## 1. Inputs
 
@@ -34,7 +34,6 @@ The notebook runs in one chain. It imports a hull STL and computes hydrostatics,
 | `mass_in` (hull mass, no rig) | 80 kg |
 | `kg_in` | 0.15 m |
 | `lcg_in`, `tcg_in` | 1.1 m, 0 |
-| `kxx_in`, `kyy_in`, `kzz_in` | 0.35 B, 0.25 L, 0.25 L |
 | `dfy_in`, `dfz_in` (downflooding point) | 0, 0.78 m |
 | `fixed_in` (motor, bearing and plate mass) | 2 kg |
 | `skin_in` | 0.8 kg/m² |
@@ -58,7 +57,6 @@ These are physical or empirical coefficients that you can tune.
   - Knot: 0.514444 m/s.
   - Gas constant: 287.05.
   - Sutherland's law constants.
-  - Surge added mass: 5% of displacement.
   - Leeway cap: 12°.
   - Viterna `CD_max = 1.11 + 0.018 AR`.
   - `hull_shell` threshold: `frac = 0.05`.
@@ -78,11 +76,11 @@ Grouped by area, with a flag for whether later cells use them and whether they a
 |---|---|---|
 | `hull` mesh | Everything | **Yes** |
 | `draft` (waterline solved from `mass_in`) | Resistance, windage, stability, sail height | **Yes** |
-| `hull_body`, `hull_body_z` (shell, and the cut height separating shell from fins) | Fin split, form coefficients, added mass | Yes |
+| `hull_body`, `hull_body_z` (shell, and the cut height separating shell from fins) | Fin split, form coefficients | Yes |
 | `hs` (volume, mass, CB, waterplane, wetted area, BMt, BML, KMt, Cb, Cwp) | Form, resistance, GM, helm and the other later cells | **Yes** |
 | `up` (shell wetted area, `fins` list, CLP, lateral area) | Resistance, fin forces, heel arm, helm | **Yes**, and fragile: it expects exactly 2 fins, labelled by area (keel is the larger). The 5% threshold gives two fins for about 3% to 20%. |
 | `form` (Cm, Cp, LCB%, half-angle of entrance, LWL) | Holtrop form factor | Yes |
-| `air_side`, `air_front`, `fb_top`, `fb_x` | Mast step height (`fb_*`), step plot (`air_side`) | Medium. `air_front` and the freeboard table are only reported. |
+| `air_side`, `air_front`, `fb_top`, `fb_x` | Mast step height (`fb_*`), step plot (`air_side`) | Medium. `air_front` feeds `hull_wind` (windage drag); the freeboard table is only reported. |
 | `hull_wind` (hull frontal and side areas, waterline height, heeling arm) | Force balance, survival heeling moment | Medium |
 | `mast_step` | Sail height, heeling arm, rig height available | **Yes** |
 
@@ -92,9 +90,6 @@ Grouped by area, with a flag for whether later cells use them and whether they a
 | `gz_heel`, `gz_val`, `gz_draft` | Downflooding, heel solve (via `rm_val`), summary | **Yes** |
 | `use_angle`, `df_angle`, `avs_angle` | Constraints table, summary | **Yes** (limits the usable heel range) |
 | GM table, MCT1cm, GM-from-slope | Report only | Informational |
-
-### Dynamics (report only)
-These are `k_solid`, `k_buoy`, `I_dry`, the added masses `am`, `A11`, and the roll period. No downstream cell uses them. They are all marked as estimates and are the least critical block.
 
 ### Environment
 - `rho_air`, `wind_states`, `wind_at`, `KNOT`: used almost everywhere. Critical.
@@ -141,7 +136,7 @@ There are 14 PASS / MARGINAL / FAIL checks. The three speed rows also show the 0
   - Draft, mass and displaced volume are consistent: `draft` is solved from `mass_in` (hull only) and shared by resistance, windage and stability.
   - The all-up cell adds the rig to the hull and recomputes the GZ curve and survival margin, but it is one-way. Resistance, the force balance and the structural loads keep the hull-only waterline and righting moment. If the rig mass becomes large, move the correction upstream.
   - `lcg_in` and `kg_in` are single placeholders for the hull.
-- **Cells that report values nothing else uses:** the dynamics block, `air_front`, the freeboard table, `R_req`, and `sweep`.
+- **Cells that report values nothing else uses:** the freeboard table, `R_req`, and `sweep`.
 - **Weakest assumptions that drive critical outputs:**
   - `taper_in` (wave resistance; best speed at the minimum wind swings by about 1 kn across the fairing band).
   - `hull_cdf_in`, `hull_cds_in` (hull windage drag).

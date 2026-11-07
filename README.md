@@ -14,7 +14,7 @@ The notebook imports the hull STL and computes hydrostatics and stability. It th
 - `CLAUDE.md`: guidance for Claude Code working in this repository.
 
 ## Notebook sections
-1. Geometry import, hydrostatics (draft solved from the hull mass), GZ curve, stability limits, inertias and added mass, mast step.
+1. Geometry import, hydrostatics (draft solved from the hull mass), GZ curve, stability limits, mast step.
 2. Environment and constraints: wind states, crossing target, design limits.
 3. Hydrodynamic forces: calm-water resistance, Michell wave resistance, keel and rudder side force.
 4. Wing-sail aerodynamics: planform, section data (NeuralFoil), finite-span and post-stall corrections, centre of effort and mast torque.

@@ -48,7 +48,6 @@ Still open:
 Replace these once the real mission and weight budget exist.
 
 - **Weights and CG:** `mass_in` (80 kg), `kg_in`, `lcg_in`, `tcg_in`, `fixed_in`.
-- **Radii of gyration:** `kxx_in`, `kyy_in`, `kzz_in`. Only the dynamics block uses them, which no later cell reads.
 - **Structure:** material strength, modulus, density, skin density, safety factor, `CN_lock`, minimum wall.
 - **Limits and environment:** the air-draft limit (5 m), the 6 / 15 / 45 kn wind states, the crossing distance and time.
 - **Downflooding point:** `dfy_in`, `dfz_in` (0, 0.78 m) is a guess, and it sets the usable stability range that the heel limit is checked against.
@@ -58,5 +57,5 @@ Replace these once the real mission and weight budget exist.
 
 Resolved: `README.md` rewritten, project `CLAUDE.md` covers the new sections and cross-cell names, and `NOTEBOOK_OVERVIEW.md` updated for the P2 changes (keep it in step with the notebook when inputs change).
 
-- **Unused outputs.** The dynamics block, `air_front`, the freeboard table and `R_req` are not read by any later cell. Keep them as documentation, or hook them into the Design Summary.
+- **Unused outputs.** The freeboard table and `R_req` are not read by any later cell. Keep them as documentation, or hook them into the Design Summary.
 - **Fresh-run check.** Run `marimo edit --sandbox notebooks/notebook.py` from scratch to confirm the pinned dependencies resolve and every cell works. There is no test setup, so this is the only check.
