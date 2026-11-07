@@ -2498,7 +2498,147 @@ def _(
             f"Survival heeling moment {_hm:.0f} N m exceeds the peak righting moment {_rm_max:.0f} N m.",
             kind="danger") if _over else mo.md(""),
     ])
-    return (rig_mass,)
+    return rig_mass, skin_mass
+
+
+@app.cell
+def _():
+    mo.md(r"""
+    ## Mast Drivetrain and Motor Sizing
+    A single motor turns the mast, and with it the sail, through a reduction gearbox: `T_motor = T_mast / (N eta)` for gear ratio `N` and drivetrain efficiency `eta`. The mast torque the drivetrain must supply is the sum of
+
+    - **Aerodynamic torque**, the peak of the mast torque over the angle-of-attack range at the design wind (Centre of Effort and Mast Torque).
+    - **Friction**: a seal drag plus bearing friction, `mu r_b (2 M / L_b + V + W)`. The root bending moment `M` and shear `V` of the design case are reacted by a pair of bearings `L_b` apart, `W` is the rig weight and `r_b` the bearing radius, taken as the mast radius at the root.
+    - **Inertia** of the sail about the mast axis, treating the skin as a flat plate of mean chord `c` with its centroid at mid-chord: `I = m_skin c^2 (1/12 + (0.5 - x_m)^2)`. The spar sits on the axis and is ignored. The sail is taken to reach the slew rate `omega` in a time `t_a`, so the inertial torque is `I omega / t_a`.
+
+    A **torque safety factor** multiplies the sum. The **continuous** (holding) requirement leaves out the inertia, the **peak** includes it. The motor is checked against its continuous and peak torque and its speed `omega N`. The holding power in the windings is `(T_motor / K_m)^2` with `K_m` the motor constant, which is what the sail costs in electrical power just to stay trimmed.
+
+    The **survival** torque is the peak mast torque at the survival wind, with the safety factor. The motor is not expected to hold it, so it sets the gearbox output rating and the brake or self-locking requirement. The torque limits and sail response in a gust are not modelled, and the gearbox and motor are generic placeholders until real parts are chosen.
+    """)
+    return
+
+
+@app.cell
+def _():
+    gear_in = mo.ui.number(start=5, stop=1000, step=5, value=100, label="Gear ratio N")
+    eta_in = mo.ui.number(start=0.3, stop=0.98, step=0.01, value=0.75, label="Drivetrain efficiency")
+    slew_in = mo.ui.number(start=1, stop=60, step=1, value=10, label="Sail slew rate (deg/s)")
+    acc_t_in = mo.ui.number(start=0.2, stop=10, step=0.1, value=1.0, label="Time to reach slew rate (s)")
+    tsf_in = mo.ui.number(start=1.0, stop=4.0, step=0.1, value=2.0, label="Torque safety factor")
+    mu_in = mo.ui.number(start=0.001, stop=0.05, step=0.001, value=0.005, label="Bearing friction coefficient")
+    seal_in = mo.ui.number(start=0.0, stop=5.0, step=0.1, value=0.5, label="Seal drag (N m)")
+    bspan_in = mo.ui.number(start=0.1, stop=1.0, step=0.05, value=0.3, label="Bearing spacing L_b (m)")
+    mcont_in = mo.ui.number(start=0.01, stop=5.0, step=0.01, value=0.10, label="Motor continuous torque (N m)")
+    mpeak_in = mo.ui.number(start=0.01, stop=15.0, step=0.01, value=0.30, label="Motor peak torque (N m)")
+    mrpm_in = mo.ui.number(start=500, stop=10000, step=100, value=3000, label="Motor max speed (rpm)")
+    km_in = mo.ui.number(start=0.005, stop=0.2, step=0.005, value=0.03, label="Motor constant K_m (N m / sqrt(W))")
+    gbox_in = mo.ui.number(start=1, stop=200, step=1, value=30, label="Gearbox output torque rating (N m)")
+    mo.vstack([
+        mo.hstack([gear_in, eta_in, slew_in, acc_t_in, tsf_in], justify="start"),
+        mo.hstack([mu_in, seal_in, bspan_in, gbox_in], justify="start"),
+        mo.hstack([mcont_in, mpeak_in, mrpm_in, km_in], justify="start"),
+    ])
+    return (
+        acc_t_in,
+        bspan_in,
+        eta_in,
+        gbox_in,
+        gear_in,
+        km_in,
+        mcont_in,
+        mpeak_in,
+        mrpm_in,
+        mu_in,
+        seal_in,
+        slew_in,
+        tsf_in,
+    )
+
+
+@app.cell
+def _(
+    G,
+    acc_t_in,
+    bspan_in,
+    eta_in,
+    gbox_in,
+    gear_in,
+    km_in,
+    mast_D,
+    mast_torque,
+    mcont_in,
+    mpeak_in,
+    mrpm_in,
+    mu_in,
+    rig_mass,
+    sail,
+    sail_mast_in,
+    seal_in,
+    skin_mass,
+    slew_in,
+    sp,
+    struct,
+    tsf_in,
+    v_sail,
+    v_surv,
+):
+    _m = (sp["alpha"] >= 0) & (sp["alpha"] <= 30)
+    _t_aero = float(np.abs(mast_torque(v_sail)[_m]).max())
+    _t_aero_surv = float(np.abs(mast_torque(v_surv)[_m]).max())
+    _r_b = mast_D[0] / 2
+
+
+    def bearing_friction(s):
+        """Seal plus bearing friction torque (N m) for a load case from `struct`."""
+        radial = 2 * s["moment"][0] / bspan_in.value + s["shear"][0]
+        return seal_in.value + mu_in.value * _r_b * (radial + rig_mass * G)
+
+
+    _t_fric = bearing_friction(struct["Design"])
+    _t_fric_surv = bearing_friction(struct["Survival"])
+    _inertia = skin_mass * sail["mac"] ** 2 * (1 / 12 + (0.5 - sail_mast_in.value) ** 2)
+    _omega = np.radians(slew_in.value)
+    _t_acc = _inertia * _omega / acc_t_in.value
+
+    _ne = gear_in.value * eta_in.value
+    drive = dict(
+        hold=tsf_in.value * (_t_aero + _t_fric),
+        peak=tsf_in.value * (_t_aero + _t_fric + _t_acc),
+        survival=tsf_in.value * (_t_aero_surv + _t_fric_surv),
+    )
+    drive["motor_hold"] = drive["hold"] / _ne
+    drive["motor_peak"] = drive["peak"] / _ne
+    drive["rpm"] = slew_in.value * gear_in.value / 6.0
+    drive["p_mech"] = drive["peak"] * _omega
+    drive["p_hold"] = (drive["motor_hold"] / km_in.value) ** 2
+
+    _rows = [
+        ("Aerodynamic torque, design wind (N m)", f"{_t_aero:.2f}", f"{v_sail:.1f} m/s, peak over alpha"),
+        ("Friction torque, design case (N m)", f"{_t_fric:.2f}", f"seal {seal_in.value:.2f} + bearings, r_b {_r_b * 1e3:.0f} mm"),
+        ("Sail inertia about the mast (kg m^2)", f"{_inertia:.3f}", f"skin {skin_mass:.2f} kg"),
+        ("Inertial torque (N m)", f"{_t_acc:.3f}", f"{slew_in.value:.0f} deg/s in {acc_t_in.value:.1f} s"),
+        ("Mast torque, continuous (N m)", f"{drive['hold']:.2f}", f"with safety factor {tsf_in.value:.1f}"),
+        ("Mast torque, peak (N m)", f"{drive['peak']:.2f}", ""),
+        ("Mast torque, survival (N m)", f"{drive['survival']:.2f}", f"{v_surv:.1f} m/s, gearbox and brake rating"),
+        ("Motor torque, continuous (N m)", f"{drive['motor_hold']:.3f}", f"N eta = {_ne:.0f}"),
+        ("Motor torque, peak (N m)", f"{drive['motor_peak']:.3f}", ""),
+        ("Motor speed at the slew rate (rpm)", f"{drive['rpm']:.0f}", ""),
+        ("Mechanical power at the mast, peak (W)", f"{drive['p_mech']:.2f}", ""),
+        ("Holding power in the windings (W)", f"{drive['p_hold']:.2f}", "continuous torque, stalled"),
+    ]
+    _checks = [
+        ("Motor continuous torque (N m)", drive["motor_hold"], mcont_in.value),
+        ("Motor peak torque (N m)", drive["motor_peak"], mpeak_in.value),
+        ("Motor speed (rpm)", drive["rpm"], mrpm_in.value),
+        ("Gearbox output torque, survival (N m)", drive["survival"], gbox_in.value),
+    ]
+    _bad = [n for n, req, cap in _checks if req > cap]
+    mo.vstack([
+        mo.ui.table([{"Property": a, "Value": b, "Note": c} for a, b, c in _rows], selection=None, pagination=False),
+        mo.callout("Over the rating: " + "; ".join(_bad) + ".", kind="danger") if _bad
+        else mo.callout("The motor and gearbox ratings cover every load case.", kind="success"),
+    ])
+    return (drive,)
 
 
 @app.cell(hide_code=True)
@@ -2515,6 +2655,8 @@ def _(
     KNOT,
     airdraft_in,
     draft_in,
+    drive,
+    gbox_in,
     gz_heel,
     hs,
     mass_in,
@@ -2522,6 +2664,9 @@ def _(
     maxheel_in,
     maxlead_in,
     maxrig_in,
+    mcont_in,
+    mpeak_in,
+    mrpm_in,
     rig_mass,
     rm_val,
     sail,
@@ -2564,6 +2709,14 @@ def _(
         _check("Survival heeling moment (N m)", _surv_m, float(rm_val[-1]), _surv_m < rm_val[-1], 1 - _surv_m / float(rm_val[-1])),
         _check("Survival tip deflection (% of span)", 100 * struct["Survival"]["defl"][-1] / sail["b"], 10.0,
                struct["Survival"]["defl"][-1] / sail["b"] < 0.10, 1 - 10 * struct["Survival"]["defl"][-1] / sail["b"]),
+        _check("Motor continuous torque (N m)", drive["motor_hold"], mcont_in.value,
+               drive["motor_hold"] <= mcont_in.value, 1 - drive["motor_hold"] / mcont_in.value),
+        _check("Motor peak torque (N m)", drive["motor_peak"], mpeak_in.value,
+               drive["motor_peak"] <= mpeak_in.value, 1 - drive["motor_peak"] / mpeak_in.value),
+        _check("Motor speed at the slew rate (rpm)", drive["rpm"], mrpm_in.value,
+               drive["rpm"] <= mrpm_in.value, 1 - drive["rpm"] / mrpm_in.value),
+        _check("Gearbox output torque, survival (N m)", drive["survival"], gbox_in.value,
+               drive["survival"] <= gbox_in.value, 1 - drive["survival"] / gbox_in.value),
     ]
     _fails = [c["Criterion"] for c in _checks if c["Status"] == "FAIL"]
     _marg = [c["Criterion"] for c in _checks if c["Status"] == "MARGINAL"]
