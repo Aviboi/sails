@@ -58,8 +58,7 @@ Replace these once the real mission and weight budget exist.
 
 ## P6: Housekeeping
 
-- **`README.md` is stale.** It refers to `notebooks/2_Calculations.py` and other notebooks that no longer exist.
-- **Project `CLAUDE.md`** does not mention the new sections or the cross-cell names they define (`balance`, `best_trim`, `make_rig`, `rig_for`, `struct`, `rig_mass`).
-- **`NOTEBOOK_OVERVIEW.md`** is new and uncommitted. It will go stale as inputs change, so update it with the notebook or fold it into the README rewrite.
+Resolved: `README.md` rewritten, project `CLAUDE.md` covers the new sections and cross-cell names, and `NOTEBOOK_OVERVIEW.md` updated for the P2 changes (keep it in step with the notebook when inputs change).
+
 - **Unused outputs.** The dynamics block, `air_front`, the freeboard table and `R_req` are not read by any later cell. Keep them as documentation, or hook them into the Design Summary.
 - **Fresh-run check.** Run `marimo edit --sandbox notebooks/notebook.py` from scratch to confirm the pinned dependencies resolve and every cell works. There is no test setup, so this is the only check.

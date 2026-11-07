@@ -1,4 +1,4 @@
-# Overview of `notebooks/notebook.py` (2735 lines)
+# Overview of `notebooks/notebook.py` (2933 lines)
 
 The notebook runs in one chain. It imports a hull STL and computes hydrostatics, stability and added mass. Then it designs a wing sail, balances sail force against hull force, sizes the structure and motor, and ends with a pass/fail summary.
 
@@ -7,7 +7,7 @@ The notebook runs in one chain. It imports a hull STL and computes hydrostatics,
 ### A. Geometry and file inputs
 | Input | Default | Notes |
 |---|---|---|
-| `hull_form` (file or path, units, axes, flip, recenter) | `data/Hull Form.STL`, mm, Z-up, recenter | The only CAD input. It is a single solid containing hull, keel and rudder. |
+| `hull_form` (file or path, units, axes, flip, recenter) | `data/Hull Form.stl`, mm, Z-up, flip, recenter | The only CAD input. It is a single solid containing hull, keel and rudder. The hull form flips by default so the bow points to +x. |
 
 ### B. Design decisions (free choices)
 | Input | Default | Used by |
@@ -27,12 +27,11 @@ The notebook runs in one chain. It imports a hull STL and computes hydrostatics,
 | `dfrac_in` | 0.8 | Mast OD as a fraction of section thickness |
 | `maxheel_in`, `maxlead_in`, `maxrig_in`, `airdraft_in`, `dist_in`, `days_in` | 25°, 0.10 LWL, 25 kg, 5 m, 3000 nm, 40 d | These act as **requirements** (the acceptance criteria). The air-draft limit is a flagged placeholder. |
 | `taper_in` (transom fairing) | 0.2 m | A modelling choice that strongly affects wave resistance. The notebook plots the 0–0.45 m band. |
-| `draft_in` | 0.668 m | The operating waterline. It could also be called a derived quantity, because it should match mass/ρ. |
 
 ### C. Estimates or placeholders (weight and physical guesses)
 | Input | Default |
 |---|---|
-| `mass_in` | 80 kg |
+| `mass_in` (hull mass, no rig) | 80 kg |
 | `kg_in` | 0.15 m |
 | `lcg_in`, `tcg_in` | 1.1 m, 0 |
 | `kxx_in`, `kyy_in`, `kzz_in` | 0.35 B, 0.25 L, 0.25 L |
@@ -45,11 +44,13 @@ The notebook runs in one chain. It imports a hull STL and computes hydrostatics,
 | `sf_in` (strength safety factor) | 2.0 |
 | `tsf_in` (torque safety factor) | 2.0 |
 | `cn_lock_in` | 1.2 |
+| `hull_cdf_in`, `hull_cds_in` (hull windage drag, frontal and side) | 0.6, 1.0 (guesses) |
 | `vmin_in`, `vdes_in`, `vsurv_in` | 6 / 15 / 45 kn (environmental design assumptions) |
 
 ### D. Modelling assumptions and parameters
 These are physical or empirical coefficients that you can tune.
 - **Environment:** `air_temp_in` (15 °C), `pressure_in` (1013 hPa), `zref_in` (10 m), `alpha_in` (shear exponent 0.11), `rho_in` (sea water 1025), `nu_in` (1.19e-6), `dcf_in` (roughness 0.0003), `vmax_in` (display range).
+- **Waterline:** there is no draft input. `draft` is solved from `mass_in` and `rho_in` by `solve_draft`.
 - **Heel and trim:** `heel_in` and `trim_in` are single-point hydrostatics settings. `heelmax_in` and `heelstep_in` set the GZ sweep.
 - **End-plate factors:** `arf_in` (fins, 1.3) and `sail_arf_in` (sail, 1.0).
 - **Hardcoded constants:**
@@ -76,11 +77,13 @@ Grouped by area, with a flag for whether later cells use them and whether they a
 | Output | Used downstream | Critical |
 |---|---|---|
 | `hull` mesh | Everything | **Yes** |
+| `draft` (waterline solved from `mass_in`) | Resistance, windage, stability, sail height | **Yes** |
 | `hull_body`, `hull_body_z` (shell, and the cut height separating shell from fins) | Fin split, form coefficients, added mass | Yes |
 | `hs` (volume, mass, CB, waterplane, wetted area, BMt, BML, KMt, Cb, Cwp) | Form, resistance, GM, helm and the other later cells | **Yes** |
-| `up` (shell wetted area, `fins` list, CLP, lateral area) | Resistance, fin forces, heel arm, helm | **Yes**, and fragile: it expects exactly 2 fins |
+| `up` (shell wetted area, `fins` list, CLP, lateral area) | Resistance, fin forces, heel arm, helm | **Yes**, and fragile: it expects exactly 2 fins, labelled by area (keel is the larger). The 5% threshold gives two fins for about 3% to 20%. |
 | `form` (Cm, Cp, LCB%, half-angle of entrance, LWL) | Holtrop form factor | Yes |
 | `air_side`, `air_front`, `fb_top`, `fb_x` | Mast step height (`fb_*`), step plot (`air_side`) | Medium. `air_front` and the freeboard table are only reported. |
+| `hull_wind` (hull frontal and side areas, waterline height, heeling arm) | Force balance, survival heeling moment | Medium |
 | `mast_step` | Sail height, heeling arm, rig height available | **Yes** |
 
 ### Stability
@@ -108,37 +111,40 @@ These are `k_solid`, `k_buoy`, `I_dry`, the added masses `am`, `A11`, and the ro
 - `nu_air`: used in the sizing sweep.
 
 ### Force balance
-- `rig0`, `rm_val`, `heel_for`, `balance`, `best_trim`, `helm`: the core solver.
+- `rig0`, `make_rig`, `rm_val`, `heel_for`, `balance`, `best_trim`, `helm`: the core solver. `balance` includes hull windage (drag, side force, heeling moment).
 - **`sail_runs`**: Critical. It holds speed, heel and lead by TWA, and the summary reads it directly.
-- `sweep`: a trade study (area × AR). It is not used later, but it informs the sail-size decision.
+- `taper_band`: the same sweeps at 0 m and 0.45 m transom fairing. The Design Summary shows the range beside the three speed rows.
+- `sweep` and `rig_for`: a trade study (area × AR) at one TWA. It does not recompute rig mass, is not used later, and informs the sail-size decision.
 
 ### Structure and drivetrain
 | Output | Used downstream | Critical |
 |---|---|---|
 | `struct` (loads, wall, deflection, spar mass, heeling moment) | Drivetrain friction, summary | **Yes** |
-| `rig_mass`, `skin_mass` | Drivetrain, summary | **Yes** |
+| `rig_mass`, `skin_mass` | Drivetrain, all-up mass, summary | **Yes** |
+| `total_mass`, `cg_all`, `rm_peak_all`, `surv_moment` (hull + rig, GZ recomputed, survival moment with hull windage) | Summary survival row | **Yes** |
 | `mast_D`, `span_z` | Friction radius, plots | Medium |
 | `drive` (hold, peak and survival torque, motor torques, rpm, power) | Summary | **Yes** |
 
 ### Final outputs (all in the Design Summary)
-There are 14 PASS / MARGINAL / FAIL checks:
+There are 14 PASS / MARGINAL / FAIL checks. The three speed rows also show the 0 to 0.45 m transom-fairing range:
 - Speed: best at design wind, slowest at TWA ≥ 90°, best at minimum wind.
 - Heel: peak steady heel, and the heel limit against the usable stability range.
 - Helm: peak CE–CLP lead.
 - Rig: mass, and span against the air-draft limit.
-- Survival: heeling moment, and tip deflection.
+- Survival: heeling moment against the righting moment with the rig, and tip deflection.
 - Drivetrain: motor continuous torque, motor peak torque, motor speed, gearbox rating.
 
 ## 3. Things worth knowing about the data flow
 
 - **The input the final answer depends on most:** the sail area, aspect ratio, mast step, `mass_in`/`kg_in`, and the three wind speeds.
-- **Consistency gaps between inputs:**
-  - `draft_in` (0.668 m), `mass_in` (80 kg) and the hull's displaced volume are independent inputs. `draft_in` isn't forced to match the mass. The GZ curve solves the waterline from mass, but the resistance and wetted area use `draft_in`.
-  - `lcg_in` and `kg_in` are single placeholders. The rig mass and motor mass don't feed back into them.
-  - The hull mass and the rig mass computed in the structure section are never combined into a total.
+- **Consistency:**
+  - Draft, mass and displaced volume are consistent: `draft` is solved from `mass_in` (hull only) and shared by resistance, windage and stability.
+  - The all-up cell adds the rig to the hull and recomputes the GZ curve and survival margin, but it is one-way. Resistance, the force balance and the structural loads keep the hull-only waterline and righting moment. If the rig mass becomes large, move the correction upstream.
+  - `lcg_in` and `kg_in` are single placeholders for the hull.
 - **Cells that report values nothing else uses:** the dynamics block, `air_front`, the freeboard table, `R_req`, and `sweep`.
 - **Weakest assumptions that drive critical outputs:**
-  - `taper_in` (wave resistance).
+  - `taper_in` (wave resistance; best speed at the minimum wind swings by about 1 kn across the fairing band).
+  - `hull_cdf_in`, `hull_cds_in` (hull windage drag).
   - The 12° leeway cap and the end-plate factors (`arf_in`, `sail_arf_in`).
   - The post-stall Viterna extension past 30° (sail runs at TWA > 90°).
   - The minimum wind is only 6 kn.
