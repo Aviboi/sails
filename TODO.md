@@ -30,4 +30,3 @@ The Design Summary section currently shows these against the 1.5 m^2 sail:
 - **`README.md` is stale.** It refers to `notebooks/2_Calculations.py` and other notebooks that no longer exist.
 - **Project `CLAUDE.md`** does not mention the new sections or the cross-cell names they define (`balance`, `best_trim`, `make_rig`, `rig_for`, `struct`, `rig_mass`).
 - **Fresh-run check.** Run `marimo edit --sandbox notebooks/notebook.py` from scratch to confirm the pinned dependencies resolve and every cell works. There is no test setup, so this is the only check.
-- **Push** the `rewrite` branch. The work is committed locally but not pushed.
