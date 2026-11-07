@@ -704,7 +704,7 @@ def _(hydrostatics):
                              cb=s["cb_earth"], volume=s["volume"]))
         return rows
 
-    return (gz_curve,)
+    return brentq, gz_curve
 
 
 @app.cell
@@ -1111,13 +1111,14 @@ def _():
     mo.md(r"""
     # Sail Design
 
-    With the hull characterised, the remaining sections design the rigid sail and check it against the hull. Each section below will be filled in turn, and each one feeds the next.
+    With the hull characterised, the remaining sections design the rigid sail and check it against the hull. Each section below feeds the next.
 
     1. **Environment and Constraints:** wind and air properties, the crossing target, and the limits the design must respect.
     2. **Hydrodynamic Forces:** hull resistance against speed, and keel and rudder lift and drag with leeway.
     3. **Wing-Sail Aerodynamics:** section data, finite-span corrections, flap or tail control, centre of effort.
     4. **Force Balance and Heel:** sail force against hydrodynamic force, equilibrium speed, heel and helm over points of sail.
     5. **Structural Loads:** mast and step load cases from the design and survival winds.
+    6. **Design Summary:** every acceptance criterion against the result, pass or fail.
     """)
     return
 
@@ -1208,7 +1209,7 @@ def _(
         mo.ui.table(_rows, selection=None, pagination=False),
         _fig,
     ])
-    return KNOT, rho_air, wind_at
+    return KNOT, rho_air, wind_at, wind_states
 
 
 @app.cell(hide_code=True)
@@ -1561,7 +1562,7 @@ def _(
         mo.ui.table(_rows, selection=None, pagination=False),
         _fig,
     ])
-    return
+    return (total_resistance,)
 
 
 @app.cell(hide_code=True)
@@ -1627,7 +1628,7 @@ def _(KNOT, arf_in, rho_in, up, v_req):
         _ax.grid(alpha=0.3)
         _ax.legend()
     mo.vstack([mo.ui.table(_rows, selection=None, pagination=False), _fig])
-    return
+    return (appendage_side_force,)
 
 
 @app.cell(hide_code=True)
@@ -1703,7 +1704,7 @@ def _(
         mo.ui.table([{"Property": a, "Value": b, "Note": c} for a, b, c in _rows], selection=None, pagination=False),
         _fig,
     ], justify="start")
-    return (sail,)
+    return sail, sail_planform
 
 
 @app.cell(hide_code=True)
@@ -1784,7 +1785,7 @@ def _(
         mo.md(f"NeuralFoil confidence is below 0.8 for {len(_low)} of {len(sec['alpha'])} angles"
               + (f" (|alpha| from {np.abs(_low).min():.1f} deg)." if len(_low) else ".")),
     ])
-    return re_sail, sail_z, section_polar, v_sail
+    return nu_air, re_sail, sail_z, section_polar, v_sail
 
 
 @app.cell(hide_code=True)
@@ -1859,7 +1860,7 @@ def _(re_sail, sail, sail_arf_in, sail_taper_in, sail_tc_in, section_polar):
     _axs[0].legend()
     _axs[1].legend()
     mo.vstack([mo.ui.table([{"Property": a, "Value": b, "Note": c} for a, b, c in _rows], selection=None, pagination=False), _fig])
-    return (sp,)
+    return sail_ar_eff, sail_polar, sp
 
 
 @app.cell(hide_code=True)
@@ -1935,15 +1936,377 @@ def _(
     for _ax in _axs:
         _ax.grid(alpha=0.3)
     mo.vstack([mo.ui.table([{"Property": a, "Value": b, "Note": c} for a, b, c in _rows], selection=None, pagination=False), _fig])
-    return
+    return mast_torque, sail_ce_height, sail_cn, v_surv
 
 
 @app.cell(hide_code=True)
 def _():
     mo.md(r"""
     ## Force Balance and Heel
-    _To do:_ sail force against hydrodynamic force over the points of sail, equilibrium speed, heel and helm, checked against the limits above.
+    The sail force is balanced against the hydrodynamic force over the points of sail. The wind is true wind `V_tw` at true wind angle `TWA` from the bow, taken at the height of the sail's lift centroid. For a boat speed `V` the apparent wind has components `V_tw cos(TWA) + V` along the boat and `V_tw sin(TWA)` across it, giving the apparent wind speed `AWS` and angle `AWA`. The sail is turned to an **angle of attack** `alpha` to the apparent wind, which the motor sets directly, so `alpha` is the control variable. With `L = q S CL` and `D = q S CD` at `q = rho_air AWS^2 / 2`,
+
+    - **Drive:** `F_x = L sin(AWA) - D cos(AWA)` along the boat, and **side force** `F_y = L cos(AWA) + D sin(AWA)` across it.
+    - **Heel:** the heeling moment `F_y h cos(phi)`, with `h` the height of the lift centroid above the centre of lateral resistance, is set equal to the righting moment `m g GZ(phi)` from the GZ curve, up to its peak. The sail force is not reduced for heel, other than the `cos(phi)` on the moment and on the horizontal components.
+    - **Leeway:** the keel and rudder carry the side force `F_y cos(phi)`, which fixes the leeway angle, capped at 12 degrees. Their induced drag adds to the resistance.
+    - **Speed:** `V` is the speed at which `F_x cos(phi)` equals the calm-water resistance (viscous plus Michell wave-making, tabulated once on a speed grid) plus the induced drag.
+
+    For each `TWA` the angle of attack is chosen to give the highest speed with the steady heel at or under the **max heel** limit; if even the smallest tried angle exceeds it, the sail is feathered to the least heel. The sail polar is NeuralFoil data up to 30 degrees and a Viterna-Corrigan post-stall extension to 90 degrees beyond that (see Sail Sizing), so the sail can be trimmed square to the wind on a run, where it works by drag.
+
+    **Helm** comes from the fore-and-aft position of the sail's centre of effort. The centre of pressure sits at `x_cp` chord fractions from the leading edge (from the section moment, as before), the mast at `x_m`, and the chord makes an angle `AWA - alpha` with the boat's axis, so the centre of effort is `(x_cp - x_m) c_MAC cos(AWA - alpha)` aft of the mast. The **lead** is its distance ahead of the centre of lateral resistance. The rudder force needed to cancel the yaw moment `F_y cos(phi) lead` acts at the rudder's centre, and its angle follows from the rudder's lift slope. Both are checked against the `max lead` limit.
+
+    Leeway is not fed back into the apparent wind, and there is no sea state, wave added resistance, trim, sinkage or rudder drag. The smaller fin is taken as the rudder and the larger as the keel.
     """)
+    return
+
+
+@app.cell
+def _():
+    twa_min_in = mo.ui.number(start=20, stop=90, step=5, value=40, label="Closest true wind angle sailed (deg)")
+    twa_step_in = mo.ui.number(start=5, stop=30, step=5, value=10, label="True wind angle step (deg)")
+    mo.hstack([twa_min_in, twa_step_in], justify="start")
+    return twa_min_in, twa_step_in
+
+
+@app.cell
+def _(
+    G,
+    KNOT,
+    dcf_in,
+    draft_in,
+    gz_heel,
+    gz_val,
+    mass_in,
+    mast_step,
+    nu_in,
+    rho_in,
+    sail,
+    sail_ar_eff,
+    sail_cn,
+    sp,
+    total_resistance,
+    up,
+    vmax_in,
+):
+    keel_f = max(up["fins"], key=lambda f: f["planform"])
+    rudder_f = min(up["fins"], key=lambda f: f["planform"])
+
+    # calm-water resistance tabulated once, then interpolated in the speed solve
+    res_v = np.linspace(0.05, max(vmax_in.value, 6.0) * KNOT, 30)
+    _h, _f, _w = total_resistance(res_v, up["shell_wetted"], up["fins"], rho_in.value, nu_in.value, dcf_in.value)
+    res_R = _h + _f + _w
+
+    # righting moment up to the peak of the GZ curve
+    _pk = int(np.argmax(gz_val))
+    rm_heel, rm_val = gz_heel[: _pk + 1], gz_val[: _pk + 1] * mass_in.value * G
+    rudder_arm = abs(rudder_f["clp_x"] - up["clp_x"])
+    trim_alphas = np.r_[np.arange(0.0, 30.0, 1.0), np.arange(30.0, 90.1, 3.0)]
+    ALPHA_POLAR = 30.0  # the sail polar is NeuralFoil data up to here, a flat-plate extension beyond
+
+
+    def extend_polar(sp_, sail_, cn_, ar_eff):
+        """Sail CL, CD and centre of pressure for alpha 0-90 deg: the polar to 30 deg, then Viterna-Corrigan post-stall."""
+        a = np.arange(0.0, 90.1, 1.0)
+        cm = np.interp(sp_["alpha_eff"], sp_["alpha"], sp_["section"]["CM"])
+        xcp = np.where(cn_ > 0.1, 0.25 - cm / np.where(cn_ == 0, 1, cn_), 0.25)
+        s = ALPHA_POLAR
+        cls, cds = np.interp(s, sp_["alpha"], sp_["CL"]), np.interp(s, sp_["alpha"], sp_["CD"])
+        cdmax = 1.11 + 0.018 * ar_eff
+        rs = np.radians(s)
+        a1, b1 = cdmax / 2, cdmax
+        a2 = (cls - cdmax * np.sin(rs) * np.cos(rs)) * np.sin(rs) / np.cos(rs) ** 2
+        b2 = (cds - cdmax * np.sin(rs) ** 2) / np.cos(rs)
+        r = np.radians(a)
+        cl_post = a1 * np.sin(2 * r) + a2 * np.cos(r) ** 2 / np.sin(np.maximum(r, 1e-6))
+        cd_post = b1 * np.sin(r) ** 2 + b2 * np.cos(r)
+        x_s = float(np.interp(s, sp_["alpha"], xcp))
+        return {
+            "alpha": a,
+            "CL": np.where(a <= s, np.interp(a, sp_["alpha"], sp_["CL"]), cl_post),
+            "CD": np.where(a <= s, np.interp(a, sp_["alpha"], sp_["CD"]), cd_post),
+            "xcp": np.where(a <= s, np.interp(a, sp_["alpha"], xcp), x_s + (0.5 - x_s) * (a - s) / (90.0 - s)),
+        }
+
+
+    def make_rig(sail_, sp_, cn_, ar_eff):
+        """Everything the force balance needs from a sail: its extended polar and the heights of its centre of effort."""
+        ce_h = 4 * sail_["b"] / (3 * np.pi)
+        return {
+            "sail": sail_, "polar": extend_polar(sp_, sail_, cn_, ar_eff),
+            "ce_wl": mast_step[2] - draft_in.value + ce_h,  # lift centroid above the waterline
+            "arm": mast_step[2] + ce_h - up["clp_z"],  # lift centroid above the CLP
+        }
+
+
+    rig0 = make_rig(sail, sp, sail_cn, sail_ar_eff)
+
+
+    def heel_for(moment):
+        """Steady heel (deg) whose righting moment equals the heeling moment, and whether it is past the peak."""
+        if moment >= rm_val[-1]:
+            return float(rm_heel[-1]), True
+        return float(np.interp(moment, rm_val, rm_heel)), False
+
+    return (
+        ALPHA_POLAR,
+        heel_for,
+        make_rig,
+        res_R,
+        res_v,
+        rig0,
+        rm_val,
+        rudder_arm,
+        rudder_f,
+        trim_alphas,
+    )
+
+
+@app.cell
+def _(
+    alpha_in,
+    appendage_side_force,
+    arf_in,
+    brentq,
+    heel_for,
+    mast_step,
+    res_R,
+    res_v,
+    rho_air,
+    rho_in,
+    rig0,
+    rudder_arm,
+    rudder_f,
+    sail_mast_in,
+    trim_alphas,
+    up,
+    wind_at,
+    zref_in,
+):
+    def balance(twa, alpha, v_ref, rig=rig0):
+        """Equilibrium of the boat at true wind angle twa (deg), sail angle of attack alpha (deg), wind v_ref (m/s at z_ref)."""
+        pol = rig["polar"]
+        vt = float(wind_at(rig["ce_wl"], v_ref, zref_in.value, alpha_in.value))
+        cl, cd = np.interp(alpha, pol["alpha"], pol["CL"]), np.interp(alpha, pol["alpha"], pol["CD"])
+        t = np.radians(twa)
+
+        def state(V):
+            ax, ay = vt * np.cos(t) + V, vt * np.sin(t)
+            aws, awa = np.hypot(ax, ay), np.arctan2(ay, ax)
+            qS = 0.5 * rho_air * aws**2 * rig["sail"]["S"]
+            L, D = qS * cl, qS * cd
+            Fx, Fy = L * np.sin(awa) - D * np.cos(awa), abs(L * np.cos(awa) + D * np.sin(awa))
+            phi = 0.0
+            for _ in range(6):
+                phi, over = heel_for(Fy * rig["arm"] * np.cos(np.radians(phi)))
+            Y1 = float(appendage_side_force(V, 1.0, up["fins"], rho_in.value, arf_in.value)[0])
+            lee = min(Fy * np.cos(np.radians(phi)) / Y1, 12.0)
+            Di = float(appendage_side_force(V, lee, up["fins"], rho_in.value, arf_in.value)[1])
+            net = Fx * np.cos(np.radians(phi)) - float(np.interp(V, res_v, res_R)) - Di
+            return net, dict(V=V, aws=aws, awa=np.degrees(awa), Fx=Fx, Fy=Fy, heel=phi, over=over, lee=lee, Di=Di)
+
+        lo, hi = 1e-3, res_v[-1]
+        if state(lo)[0] <= 0:
+            out = state(lo)[1] | dict(V=0.0)
+        elif state(hi)[0] > 0:
+            out = state(hi)[1]
+        else:
+            out = state(brentq(lambda V: state(V)[0], lo, hi, xtol=1e-4))[1]
+        return out | dict(alpha=alpha, twa=twa, vt=vt)
+
+
+    def best_trim(twa, v_ref, max_heel, rig=rig0):
+        """Angle of attack giving the highest speed with heel within the limit (least heel if none does)."""
+        rs = [balance(twa, a, v_ref, rig) for a in trim_alphas]
+        ok = [r for r in rs if r["heel"] <= max_heel and not r["over"]]
+        return max(ok, key=lambda r: r["V"]) if ok else min(rs, key=lambda r: r["heel"])
+
+
+    def helm(r, rig=rig0):
+        """Centre-of-effort lead ahead of the CLP (m) and the rudder angle (deg) that holds it, for a solved state."""
+        xcp = np.interp(r["alpha"], rig["polar"]["alpha"], rig["polar"]["xcp"])
+        delta = np.radians(r["awa"] - r["alpha"])
+        x_ce = mast_step[0] - (xcp - sail_mast_in.value) * rig["sail"]["mac"] * np.cos(delta)
+        lead = x_ce - up["clp_x"]
+        if r["V"] <= 0:
+            return lead, np.nan
+        f_rud = r["Fy"] * np.cos(np.radians(r["heel"])) * lead / rudder_arm
+        y1 = float(appendage_side_force(r["V"], 1.0, [rudder_f], rho_in.value, arf_in.value)[0])
+        return lead, f_rud / y1
+
+    return best_trim, helm
+
+
+@app.cell
+def _(
+    ALPHA_POLAR,
+    KNOT,
+    best_trim,
+    helm,
+    hs,
+    maxheel_in,
+    maxlead_in,
+    twa_min_in,
+    twa_step_in,
+    v_req,
+    wind_states,
+):
+    _twas = np.arange(twa_min_in.value, 180.01, twa_step_in.value)
+    _lim = maxlead_in.value * hs["wp"]["lwl"]
+    sail_runs = {}
+    for _name in ("Minimum", "Design"):
+        _rs = [best_trim(_t, wind_states[_name], maxheel_in.value) for _t in _twas]
+        for _r in _rs:
+            _r["lead"], _r["rudder"] = helm(_r)
+        sail_runs[_name] = _rs
+
+    _d, _m = sail_runs["Design"], sail_runs["Minimum"]
+    _rows = [{
+        "TWA": f"{r['twa']:.0f}", "AWA": f"{r['awa']:.0f}", "AWS (m/s)": f"{r['aws']:.1f}",
+        "alpha": f"{r['alpha']:.0f}" + ("+" if r["alpha"] > ALPHA_POLAR else ""),
+        "Drive (N)": f"{r['Fx']:.1f}", "Side (N)": f"{r['Fy']:.1f}",
+        "V (kn)": f"{r['V'] / KNOT:.2f}", "Heel (deg)": f"{r['heel']:.1f}", "Leeway (deg)": f"{r['lee']:.1f}",
+        "Lead (m)": f"{r['lead']:+.3f}", "Rudder (deg)": f"{r['rudder']:.1f}",
+    } for r in _d]
+
+    _th = np.radians(_twas)
+    _fig = plt.figure(figsize=(11, 3.6))
+    _ax = _fig.add_subplot(1, 3, 1, projection="polar")
+    for _name, _rs in sail_runs.items():
+        _ax.plot(_th, [r["V"] / KNOT for r in _rs], label=f"{_name} ({wind_states[_name] / KNOT:.0f} kn)")
+    _ax.plot(np.linspace(0, np.pi, 100), np.full(100, v_req), "k:", lw=1, label="required")
+    _ax.set_theta_zero_location("N")
+    _ax.set_theta_direction(-1)
+    _ax.set_thetamin(0)
+    _ax.set_thetamax(180)
+    _ax.set_title("Boat speed (kn)", fontsize=9)
+    _ax.legend(fontsize=7, loc="lower left")
+    _ax2 = _fig.add_subplot(1, 3, 2)
+    for _name, _rs in sail_runs.items():
+        _ax2.plot(_twas, [r["heel"] for r in _rs], label=_name)
+    _ax2.axhline(maxheel_in.value, color="r", ls="--", lw=1, label="max heel")
+    _ax2.set(xlabel="True wind angle (deg)", ylabel="Heel (deg)")
+    _ax2.legend(fontsize=8)
+    _ax3 = _fig.add_subplot(1, 3, 3)
+    for _name, _rs in sail_runs.items():
+        _ax3.plot(_twas, [r["lead"] for r in _rs], label=_name)
+    _ax3.axhspan(-_lim, _lim, color="g", alpha=0.15, label="allowed lead")
+    _ax3.set(xlabel="True wind angle (deg)", ylabel="CE ahead of CLP (m)")
+    _ax3.legend(fontsize=8)
+    for _a in (_ax2, _ax3):
+        _a.grid(alpha=0.3)
+    _fig.tight_layout()
+
+    _ok = [r["twa"] for r in _d if r["V"] >= v_req * KNOT]
+    _okm = [r["twa"] for r in _m if r["V"] >= v_req * KNOT]
+    _bad_h = [r["twa"] for r in _d if r["heel"] > maxheel_in.value]
+    _bad_l = [r["twa"] for r in _d if abs(r["lead"]) > _lim]
+    _pk_v = max(_d, key=lambda r: r["V"])
+    mo.vstack([
+        mo.md(
+            f"At the **design wind** the best speed is **{_pk_v['V'] / KNOT:.2f} kn** at TWA {_pk_v['twa']:.0f} deg, "
+            f"against the required {v_req:.2f} kn. "
+            + (f"The required speed is reached at TWA {min(_ok):.0f} to {max(_ok):.0f} deg. " if _ok
+               else "**The required speed is not reached at any angle.** ")
+            + (f"At the **minimum wind** it is reached at TWA {min(_okm):.0f} to {max(_okm):.0f} deg." if _okm
+               else f"At the **minimum wind** it is not reached; the best is {max(r['V'] for r in _m) / KNOT:.2f} kn.")
+        ),
+        mo.ui.table(_rows, selection=None, pagination=False),
+        mo.md("`+` marks an angle of attack past 30 degrees, where the sail polar is the Viterna-Corrigan post-stall extension rather than NeuralFoil data, so treat those rows as estimates."),
+        _fig,
+        mo.callout(f"Heel exceeds {maxheel_in.value:.0f} deg at TWA {_bad_h} (design wind).", kind="danger") if _bad_h
+        else mo.callout(f"Heel stays within {maxheel_in.value:.0f} deg over the points of sail at the design wind (peak {max(r['heel'] for r in _d):.1f} deg).", kind="success"),
+        mo.callout(f"Centre-of-effort lead exceeds {_lim:.3f} m at TWA {_bad_l} (design wind).", kind="danger") if _bad_l
+        else mo.callout(f"Lead stays within {_lim:.3f} m over the points of sail at the design wind.", kind="success"),
+    ])
+    return (sail_runs,)
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    ### Sail Sizing
+    The force balance is repeated for other sail areas and aspect ratios, keeping the section, taper, mast axis and hull. Each sail gets its own planform, Reynolds number and finite-span polar. Spar and rig mass are not recomputed here, so check any promising sail against the structural section below. Past 30 degrees the sail polar continues with the Viterna-Corrigan post-stall model, matched to the NeuralFoil data at 30 degrees, with a flat-plate limit `CD_max = 1.11 + 0.018 AR`. It is an extrapolation, but it lets the sail be trimmed squarer to the wind on a reach or run instead of stopping at the end of the data.
+    """)
+    return
+
+
+@app.cell
+def _():
+    sweep_twa_in = mo.ui.number(start=40, stop=180, step=5, value=120, label="True wind angle for the sizing sweep (deg)")
+    sweep_twa_in
+    return (sweep_twa_in,)
+
+
+@app.cell
+def _(
+    KNOT,
+    airdraft_in,
+    alpha_in,
+    best_trim,
+    draft_in,
+    make_rig,
+    mast_step,
+    maxheel_in,
+    nu_air,
+    sail_arf_in,
+    sail_planform,
+    sail_polar,
+    sail_taper_in,
+    sail_tc_in,
+    sweep_twa_in,
+    v_req,
+    vdes_in,
+    wind_at,
+    wind_states,
+    zref_in,
+):
+    def rig_for(area, ar):
+        """Force-balance rig for another sail area and aspect ratio, with the same taper, section and mast."""
+        s = sail_planform(area, ar, sail_taper_in.value)
+        v = float(wind_at(mast_step[2] - draft_in.value + s["z_mac"], vdes_in.value * KNOT, zref_in.value, alpha_in.value))
+        p = sail_polar(sail_tc_in.value / 100, v * s["mac"] / nu_air, sail_arf_in.value * ar, sail_taper_in.value)
+        cn = p["CL"] * np.cos(np.radians(p["alpha"])) + p["CD"] * np.sin(np.radians(p["alpha"]))
+        return make_rig(s, p, cn, sail_arf_in.value * ar)
+
+
+    _rig_h = draft_in.value + airdraft_in.value - mast_step[2]
+    _areas = np.array([0.4, 0.65, 1.0, 1.5, 2.0, 3.0, 4.0])
+    _ars = [1.5, 2.5, 3.5]
+    sweep = {}
+    for _ar in _ars:
+        _row = []
+        for _a in _areas:
+            _rg = rig_for(_a, _ar)
+            _r = best_trim(sweep_twa_in.value, wind_states["Design"], maxheel_in.value, _rg)
+            _row.append(dict(area=_a, ar=_ar, span=_rg["sail"]["b"], V=_r["V"] / KNOT, heel=_r["heel"], alpha=_r["alpha"]))
+        sweep[_ar] = _row
+
+    _fig, _axs = plt.subplots(1, 2, figsize=(10, 3.4))
+    for _ar, _row in sweep.items():
+        _axs[0].plot(_areas, [r["V"] for r in _row], "o-", label=f"AR {_ar}")
+        _axs[1].plot(_areas, [r["heel"] for r in _row], "o-", label=f"AR {_ar}")
+    _axs[0].axhline(v_req, color="k", ls=":", label="required")
+    _axs[1].axhline(maxheel_in.value, color="r", ls="--", label="max heel")
+    _axs[0].set(xlabel="Sail area (m^2)", ylabel="Speed (kn)")
+    _axs[1].set(xlabel="Sail area (m^2)", ylabel="Heel (deg)")
+    for _ax in _axs:
+        _ax.grid(alpha=0.3)
+        _ax.legend(fontsize=8)
+    _rows = [{
+        "AR": f"{r['ar']}", "Area (m^2)": f"{r['area']:.2f}", "Span (m)": f"{r['span']:.2f}" + ("" if r["span"] <= _rig_h else " (too tall)"),
+        "alpha": f"{r['alpha']:.0f}", "V (kn)": f"{r['V']:.2f}", "Heel (deg)": f"{r['heel']:.1f}",
+    } for _row in sweep.values() for r in _row]
+    _fit = [r for _row in sweep.values() for r in _row if r["V"] >= v_req and r["span"] <= _rig_h]
+    mo.vstack([
+        mo.md(
+            f"Best speed at TWA {sweep_twa_in.value:.0f} deg and the design wind, with the same section, taper, mast position and hull. "
+            f"The rig must fit under {_rig_h:.2f} m above the step. "
+            + (f"The smallest sail that reaches {v_req:.2f} kn and fits is **{min(_fit, key=lambda r: r['area'])['area']:.2f} m^2** "
+               f"at AR {min(_fit, key=lambda r: r['area'])['ar']}." if _fit
+               else f"**No sail in this grid reaches {v_req:.2f} kn and fits under the air-draft limit.**")
+        ),
+        _fig,
+        mo.accordion({"All cases": mo.ui.table(_rows, selection=None, pagination=False)}),
+    ])
     return
 
 
@@ -1951,8 +2314,266 @@ def _():
 def _():
     mo.md(r"""
     ## Structural Loads
-    _To do:_ mast and step load cases from the design and survival winds, and the resulting rig mass estimate.
+    The rig is a cantilever from the mast step, so the wind loads set the bending moment and shear the mast and step must carry, and the mast size sets most of the rig mass. Two load cases bound the design.
+
+    - **Design:** the design wind plus the required boat speed (a head-on apparent wind), with the sail at the angle of maximum lift.
+    - **Survival:** the survival wind with the sail locked beam-on at a normal-force coefficient `CN_lock`, which stands for a motor failure, or a sail left stalled in a squall. A flat plate at 90 degrees gives about 1.2, above anything the lifting sail reaches.
+
+    The load per unit span is `w(z) = q(z) CN c(z)`, with `q(z)` from the wind profile at the height of each section and `c(z)` the chord. Shear `S(z)` and bending moment `M(z)` follow by integrating from the tip down to the root. The mast is a thin-walled circular tube whose outside diameter is a fraction of the section thickness at the mast axis. Its wall comes from the bending stress, `sigma = M D / (2 I)` with `I = pi D^3 t / 8`, so `t = 4 M SF / (pi D^2 sigma_allow)`, with a minimum wall for handling. The tip deflection comes from integrating `M / (E I)` twice. The rig mass adds the mast, the skin (as an areal density over both surfaces) and a fixed allowance for the motor, bearing and step plate. The step reactions are the root shear and moment, and the survival case also gives the heeling moment on the hull, taken about the centre of lateral resistance and compared with the peak righting moment.
+
+    All the material values are placeholders for a carbon tube. Torsion from the mast torque, buckling of the thin wall, joints and fatigue are not checked.
     """)
+    return
+
+
+@app.cell
+def _():
+    cn_lock_in = mo.ui.number(start=0.5, stop=2.0, step=0.05, value=1.2, label="Locked-sail normal force CN_lock")
+    sf_in = mo.ui.number(start=1.0, stop=5.0, step=0.1, value=2.0, label="Safety factor on strength")
+    sigma_in = mo.ui.number(start=50, stop=1500, step=10, value=500, label="Allowable stress, ultimate (MPa)")
+    emod_in = mo.ui.number(start=10, stop=250, step=5, value=70, label="Tube modulus E (GPa)")
+    rho_mat_in = mo.ui.number(start=500, stop=8000, step=50, value=1600, label="Tube density (kg/m^3)")
+    dfrac_in = mo.ui.number(start=0.3, stop=1.0, step=0.05, value=0.8, label="Mast diameter / section thickness")
+    tmin_in = mo.ui.number(start=0.2, stop=3.0, step=0.1, value=0.6, label="Minimum wall (mm)")
+    skin_in = mo.ui.number(start=0.1, stop=3.0, step=0.05, value=0.8, label="Skin areal density (kg/m^2)")
+    fixed_in = mo.ui.number(start=0.0, stop=20.0, step=0.1, value=2.0, label="Motor, bearing, step plate (kg)")
+    mo.vstack([
+        mo.hstack([cn_lock_in, sf_in, sigma_in, emod_in], justify="start"),
+        mo.hstack([rho_mat_in, dfrac_in, tmin_in, skin_in, fixed_in], justify="start"),
+    ])
+    return (
+        cn_lock_in,
+        dfrac_in,
+        emod_in,
+        fixed_in,
+        rho_mat_in,
+        sf_in,
+        sigma_in,
+        skin_in,
+        tmin_in,
+    )
+
+
+@app.cell
+def _(
+    KNOT,
+    alpha_in,
+    cn_lock_in,
+    dfrac_in,
+    emod_in,
+    mast_step,
+    rho_air,
+    rho_mat_in,
+    rig0,
+    sail,
+    sail_ce_height,
+    sail_cn,
+    sail_mast_in,
+    sail_tc_in,
+    sf_in,
+    sigma_in,
+    sp,
+    tmin_in,
+    up,
+    v_req,
+    wind_at,
+    wind_states,
+    zref_in,
+):
+    span_z = np.linspace(0.0, sail["b"], 200)
+    _chord = sail["c_root"] + (sail["c_tip"] - sail["c_root"]) * span_z / sail["b"]
+    _s = sail_mast_in.value
+    _tc = sail_tc_in.value / 100
+    # NACA 00xx thickness at the mast axis, as a fraction of the local chord
+    _t_mast = 2 * 5 * _tc * (0.2969 * np.sqrt(_s) - 0.1260 * _s - 0.3516 * _s**2 + 0.2843 * _s**3 - 0.1036 * _s**4)
+    mast_D = dfrac_in.value * _t_mast * _chord
+
+    _m_alpha = (sp["alpha"] >= 0) & (sp["alpha"] <= 30)
+    _cn_max = float(sail_cn[_m_alpha].max())
+    _v_app = wind_states["Design"] + v_req * KNOT
+    load_cases = {
+        "Design": dict(v_ref=_v_app, cn=_cn_max, note=f"design wind + {v_req:.1f} kn boat speed, sail at max normal force"),
+        "Survival": dict(v_ref=wind_states["Survival"], cn=cn_lock_in.value, note="survival wind, sail locked beam-on"),
+    }
+
+
+    def spar_loads(v_ref, cn):
+        """Spanwise load w (N/m), shear S (N) and bending moment M (N m) from the tip down to the root."""
+        z_wl = rig0["ce_wl"] - sail_ce_height + span_z
+        q = 0.5 * rho_air * wind_at(z_wl, v_ref, zref_in.value, alpha_in.value) ** 2
+        w = q * cn * _chord
+        seg = np.diff(span_z)
+        # cumulative shear from the tip, then moment as the integral of shear
+        shear = np.r_[np.cumsum(((w[1:] + w[:-1]) / 2 * seg)[::-1])[::-1], 0.0]
+        moment = np.r_[np.cumsum(((shear[1:] + shear[:-1]) / 2 * seg)[::-1])[::-1], 0.0]
+        return w, shear, moment
+
+
+    def size_spar(moment):
+        """Wall thickness (m) for the allowable stress with the safety factor, then the tip deflection (m) and spar mass (kg)."""
+        t = np.maximum(4 * moment * sf_in.value / (np.pi * mast_D**2 * sigma_in.value * 1e6), tmin_in.value * 1e-3)
+        ei = emod_in.value * 1e9 * np.pi * mast_D**3 * t / 8
+        k = moment / ei
+        slope = np.r_[0.0, np.cumsum((k[1:] + k[:-1]) / 2 * np.diff(span_z))]
+        defl = np.r_[0.0, np.cumsum((slope[1:] + slope[:-1]) / 2 * np.diff(span_z))]
+        area = np.pi * mast_D * t
+        mass = rho_mat_in.value * float(np.sum((area[1:] + area[:-1]) / 2 * np.diff(span_z)))
+        return t, defl, mass
+
+
+    struct = {}
+    for _name, _c in load_cases.items():
+        _w, _sh, _mo = spar_loads(_c["v_ref"], _c["cn"])
+        _t, _defl, _mass = size_spar(_mo)
+        _arm = float(_mo[0] / _sh[0])  # height of the resultant above the root
+        _heel_m = _sh[0] * (mast_step[2] + _arm - up["clp_z"])
+        struct[_name] = dict(w=_w, shear=_sh, moment=_mo, t=_t, defl=_defl, spar=_mass, arm=_arm, heel_m=_heel_m, **_c)
+    return mast_D, span_z, struct
+
+
+@app.cell
+def _(
+    fixed_in,
+    heel_for,
+    mast_D,
+    mast_torque,
+    maxrig_in,
+    rm_val,
+    sail,
+    sail_tc_in,
+    skin_in,
+    sp,
+    span_z,
+    struct,
+    v_sail,
+    v_surv,
+):
+    _gov = max(struct.values(), key=lambda s: s["spar"])
+    _gov_name = [k for k, v in struct.items() if v is _gov][0]
+    skin_mass = skin_in.value * 2 * sail["S"] * (1 + 0.2 * sail_tc_in.value / 100)
+    rig_mass = _gov["spar"] + skin_mass + fixed_in.value
+    _ma = (sp["alpha"] >= 0) & (sp["alpha"] <= 30)
+    _rm_max = float(rm_val[-1])
+    _hm = struct["Survival"]["heel_m"]
+    _heel_surv, _over = heel_for(_hm)
+
+    _rows = []
+    for _name, _s in struct.items():
+        _rows += [
+            (f"{_name}: wind at rig, load basis", f"{_s['v_ref']:.1f} m/s at z_ref", _s["note"]),
+            (f"{_name}: CN", f"{_s['cn']:.2f}", ""),
+            (f"{_name}: root shear (N)", f"{_s['shear'][0]:.1f}", "horizontal load at the step"),
+            (f"{_name}: root bending moment (N m)", f"{_s['moment'][0]:.1f}", f"resultant {_s['arm']:.3f} m above the root"),
+            (f"{_name}: root wall thickness (mm)", f"{_s['t'][0] * 1e3:.2f}",
+             f"tube diameter {mast_D[0] * 1e3:.0f} mm, tip {mast_D[-1] * 1e3:.0f} mm"),
+            (f"{_name}: tip deflection (m)", f"{_s['defl'][-1]:.3f}", f"{_s['defl'][-1] / sail['b']:.1%} of span"),
+            (f"{_name}: spar mass (kg)", f"{_s['spar']:.2f}", ""),
+        ]
+    _rows += [
+        ("Peak mast torque, design / survival (N m)",
+         f"{np.abs(mast_torque(v_sail)[_ma]).max():.2f} / {np.abs(mast_torque(v_surv)[_ma]).max():.2f}", "from the wing-sail section"),
+        ("Survival heeling moment on the hull (N m)", f"{_hm:.1f}",
+         f"peak righting moment {_rm_max:.1f} N m: " + ("EXCEEDS, the hull is knocked down" if _over else f"heel {_heel_surv:.1f} deg")),
+        ("Skin mass (kg)", f"{skin_mass:.2f}", f"{skin_in.value:.2f} kg/m^2 over both surfaces"),
+        ("Fixed allowance (kg)", f"{fixed_in.value:.2f}", ""),
+        (f"Rig mass, governed by the {_gov_name.lower()} case (kg)", f"{rig_mass:.2f}",
+         f"limit {maxrig_in.value:.1f} kg: " + ("OK" if rig_mass <= maxrig_in.value else "EXCEEDS")),
+    ]
+
+    _fig, _axs = plt.subplots(1, 3, figsize=(11, 3.4))
+    for _name, _s in struct.items():
+        _axs[0].plot(span_z, _s["w"], label=_name)
+        _axs[1].plot(span_z, _s["moment"], label=_name)
+        _axs[2].plot(span_z, _s["t"] * 1e3, label=_name)
+    _axs[0].set(xlabel="Height above the root (m)", ylabel="Load per span (N/m)")
+    _axs[1].set(xlabel="Height above the root (m)", ylabel="Bending moment (N m)")
+    _axs[2].set(xlabel="Height above the root (m)", ylabel="Mast wall thickness (mm)")
+    for _ax in _axs:
+        _ax.grid(alpha=0.3)
+    _axs[0].legend()
+    mo.vstack([
+        mo.ui.table([{"Property": a, "Value": b, "Note": c} for a, b, c in _rows], selection=None, pagination=False),
+        _fig,
+        mo.callout(
+            f"Survival heeling moment {_hm:.0f} N m exceeds the peak righting moment {_rm_max:.0f} N m.",
+            kind="danger") if _over else mo.md(""),
+    ])
+    return (rig_mass,)
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    ## Design Summary
+    Each acceptance criterion from the constraints section against what the sections above found, for the current inputs. Speed and heel come from the points-of-sail sweep, the structure from the load cases. A margin under 10% is flagged, because the models behind it are simple.
+    """)
+    return
+
+
+@app.cell
+def _(
+    KNOT,
+    airdraft_in,
+    draft_in,
+    gz_heel,
+    hs,
+    mass_in,
+    mast_step,
+    maxheel_in,
+    maxlead_in,
+    maxrig_in,
+    rig_mass,
+    rm_val,
+    sail,
+    sail_mast_in,
+    sail_runs,
+    sail_tc_in,
+    struct,
+    use_angle,
+    v_req,
+):
+    _d, _m = sail_runs["Design"], sail_runs["Minimum"]
+    _reach = [r for r in _d if r["twa"] >= 90]
+    _lim_lead = maxlead_in.value * hs["wp"]["lwl"]
+    _heel_cap = use_angle if use_angle is not None else gz_heel[-1]
+    _rig_h = draft_in.value + airdraft_in.value - mast_step[2]
+    _surv_m = struct["Survival"]["heel_m"]
+
+
+    def _check(name, value, limit, ok, margin, unit=""):
+        status = "FAIL" if not ok else ("MARGINAL" if margin < 0.10 else "PASS")
+        return {"Criterion": name, "Result": f"{value:.2f}{unit}", "Limit": f"{limit:.2f}{unit}",
+                "Margin": f"{margin:+.0%}", "Status": status}
+
+
+    _checks = [
+        _check("Best speed, design wind (kn)", max(r["V"] for r in _d) / KNOT, v_req,
+               max(r["V"] for r in _d) / KNOT >= v_req, max(r["V"] for r in _d) / KNOT / v_req - 1),
+        _check("Slowest speed, design wind, TWA 90 deg and aft (kn)", min(r["V"] for r in _reach) / KNOT, v_req,
+               min(r["V"] for r in _reach) / KNOT >= v_req, min(r["V"] for r in _reach) / KNOT / v_req - 1),
+        _check("Best speed, minimum wind (kn)", max(r["V"] for r in _m) / KNOT, v_req,
+               max(r["V"] for r in _m) / KNOT >= v_req, max(r["V"] for r in _m) / KNOT / v_req - 1),
+        _check("Peak steady heel, design wind (deg)", max(r["heel"] for r in _d), maxheel_in.value,
+               max(r["heel"] for r in _d) <= maxheel_in.value, 1 - max(r["heel"] for r in _d) / maxheel_in.value),
+        _check("Max heel inside usable stability range (deg)", maxheel_in.value, _heel_cap,
+               maxheel_in.value < _heel_cap, 1 - maxheel_in.value / _heel_cap),
+        _check("Peak CE-CLP lead, design wind (m)", max(abs(r["lead"]) for r in _d), _lim_lead,
+               max(abs(r["lead"]) for r in _d) <= _lim_lead, 1 - max(abs(r["lead"]) for r in _d) / _lim_lead),
+        _check("Rig mass (kg)", rig_mass, maxrig_in.value, rig_mass <= maxrig_in.value, 1 - rig_mass / maxrig_in.value),
+        _check("Rig span above the step (m)", sail["b"], _rig_h, sail["b"] <= _rig_h, 1 - sail["b"] / _rig_h),
+        _check("Survival heeling moment (N m)", _surv_m, float(rm_val[-1]), _surv_m < rm_val[-1], 1 - _surv_m / float(rm_val[-1])),
+        _check("Survival tip deflection (% of span)", 100 * struct["Survival"]["defl"][-1] / sail["b"], 10.0,
+               struct["Survival"]["defl"][-1] / sail["b"] < 0.10, 1 - 10 * struct["Survival"]["defl"][-1] / sail["b"]),
+    ]
+    _fails = [c["Criterion"] for c in _checks if c["Status"] == "FAIL"]
+    _marg = [c["Criterion"] for c in _checks if c["Status"] == "MARGINAL"]
+    mo.vstack([
+        mo.md(f"Sail **{sail['S']:.2f} m^2**, aspect ratio **{sail['ar']:.2f}**, NACA 00{sail_tc_in.value:.0f}, mast at {sail_mast_in.value:.0%} chord, hull mass {mass_in.value:.0f} kg."),
+        mo.ui.table(_checks, selection=None, pagination=False),
+        mo.callout("Fails: " + "; ".join(_fails) + ".", kind="danger") if _fails
+        else mo.callout("All criteria are met" + (f", with thin margins on: {'; '.join(_marg)}." if _marg else "."),
+                        kind="warn" if _marg else "success"),
+    ])
     return
 
 
