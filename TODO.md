@@ -40,8 +40,6 @@ Still open:
 
 ## P4: Unfinished sections
 
-- **Structural checks not done:** torsion from the mast torque, wall buckling (the wall is at the 0.6 mm minimum on a tube of about 60 to 90 mm), joints and fatigue, and the step attachment.
-- **Flap or tail control** is listed as "To do" in the Wing-Sail Aerodynamics section.
 - **Sail sizing sweep does not recompute rig mass.** Spar and rig mass are only computed for the current sail, so check any other sail against the Structural Loads section.
 - **Gust response and motor torque limits** are not modelled in the drivetrain section.
 

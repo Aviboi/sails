@@ -1122,7 +1122,7 @@ def _():
 
     1. **Environment and Constraints:** wind and air properties, the crossing target, and the limits the design must respect.
     2. **Hydrodynamic Forces:** hull resistance against speed, and keel and rudder lift and drag with leeway.
-    3. **Wing-Sail Aerodynamics:** section data, finite-span corrections, flap or tail control, centre of effort.
+    3. **Wing-Sail Aerodynamics:** section data, finite-span corrections, centre of effort.
     4. **Force Balance and Heel:** sail force against hydrodynamic force, equilibrium speed, heel and helm over points of sail.
     5. **Structural Loads:** mast and step load cases from the design and survival winds.
     6. **Design Summary:** every acceptance criterion against the result, pass or fail.
@@ -1139,6 +1139,11 @@ def _():
     ### Wind and Air
     True wind is given at a reference height as a power-law profile, `V(z) = V_ref (z / z_ref)^alpha`, with `alpha` about 0.11 over open sea. Three wind states bound the design: a **minimum** at which the boat should still make way, a **design** wind that sets the sail area and balance, and a **survival** wind for the structural check. Air density follows the ideal gas law from temperature and pressure, and dynamic pressure is `q = rho V^2 / 2`.
     """)
+    return
+
+
+@app.cell
+def _():
     return
 
 
@@ -1642,7 +1647,7 @@ def _(KNOT, arf_in, rho_in, up, v_req):
 def _():
     mo.md(r"""
     ## Wing-Sail Aerodynamics
-    The sail is one rigid, symmetric wing (NACA 00xx) turned about its mast by a motor, so there is no sheet trim and no camber, and the angle of attack is set directly. Lift and drag are built in three steps: the planform from area, aspect ratio and taper; two-dimensional section data from NeuralFoil at the sail's Reynolds number; and finite-span corrections for lift slope and induced drag. A last step finds the centre of effort and the torque the mast motor must hold. _To do:_ flap or tail control.
+    The sail is one rigid, symmetric wing (NACA 00xx) turned about its mast by a motor, so there is no sheet trim and no camber, and the angle of attack is set directly. Lift and drag are built in three steps: the planform from area, aspect ratio and taper; two-dimensional section data from NeuralFoil at the sail's Reynolds number; and finite-span corrections for lift slope and induced drag. A last step finds the centre of effort and the torque the mast motor must hold.
 
     ### Planform
     The span is `b = sqrt(AR S)`, the root chord `c_r = 2 S / (b (1 + lambda))` and the tip chord `lambda c_r`, where `lambda` is the taper ratio. The mean aerodynamic chord (MAC) and its distance from the root follow from the trapezoid formulas. The root sits on the mast step. The **end-plate factor** multiplies the aspect ratio in the lift and drag calculations only: a sail close to the deck behaves as if it were longer, up to a factor of 2 for a perfect end plate, and 1 means no benefit assumed.
@@ -2436,7 +2441,7 @@ def _():
 
     The load per unit span is `w(z) = q(z) CN c(z)`, with `q(z)` from the wind profile at the height of each section and `c(z)` the chord. Shear `S(z)` and bending moment `M(z)` follow by integrating from the tip down to the root. The mast is a thin-walled circular tube whose outside diameter is a fraction of the section thickness at the mast axis. Its wall comes from the bending stress, `sigma = M D / (2 I)` with `I = pi D^3 t / 8`, so `t = 4 M SF / (pi D^2 sigma_allow)`, with a minimum wall for handling. The tip deflection comes from integrating `M / (E I)` twice. The rig mass adds the mast, the skin (as an areal density over both surfaces) and a fixed allowance for the motor, bearing and step plate. The step reactions are the root shear and moment, and the survival case also gives the heeling moment on the hull, taken about the centre of lateral resistance and compared with the peak righting moment.
 
-    All the material values are placeholders for a carbon tube. Torsion from the mast torque, buckling of the thin wall, joints and fatigue are not checked.
+    All the material values are placeholders for a carbon tube.
     """)
     return
 

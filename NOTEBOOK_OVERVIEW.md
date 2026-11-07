@@ -150,4 +150,4 @@ There are 14 PASS / MARGINAL / FAIL checks. The three speed rows also show the 0
   - The minimum wind is only 6 kn.
   - The 5 m air-draft limit.
   - Elliptical lift loading, used for both the heeling arm and the structure.
-- **Not modelled** (the notebook says so): torsion and buckling, sea state and added resistance, rudder drag, trim and sinkage, and the flap or tail control (listed as To do).
+- **Not modelled** (the notebook says so): sea state and added resistance, rudder drag, trim and sinkage.
