@@ -13,14 +13,20 @@ The Design Summary section reported these against a 1.5 m^2 sail. The notebook d
 
 ## P2: Model correctness and consistency
 
-Things that could make the headline results wrong or inconsistent with each other.
+Resolved in this pass (kept short for reference):
 
-- **Keel and rudder labelling.** `underwater_profile` sorts the fins fore to aft (descending x, bow is +x), so `keel_p, rudder_p = up["fins"]` makes the *most forward* fin the "keel". After the hull flip the larger fin (planform 0.16 m^2) sits at x about 1.0 m and the smaller (0.024 m^2) at x about 1.6 m, toward the bow. So that table names them the wrong way round, while the force balance picks them by planform area (larger = keel). Settle which is which, label the table by area, and check the rudder arm and rudder angle that depend on it.
-- **Draft, mass and displaced volume are independent inputs.** `draft_in` (0.668 m) drives wetted area, resistance, wave-making, form coefficients and the windage split, while `mass_in` (80 kg) drives the GZ curve, which solves its own waterline per heel. Nothing forces the two to agree, so the resistance can be computed at a different waterline from the stability. Either solve `draft_in` from `mass_in` or add a check that flags a mismatch.
-- **Total mass and CG are not built up.** The rig mass from Structural Loads (mast, skin, motor) is never added to `mass_in`, `kg_in` or `lcg_in`. A tall rig raises KG, which reduces GZ and the survival margin.
-- **Exactly two fins are assumed.** `underwater_profile` stops the notebook if `hull_body_z` splits the underwater body into anything other than two pieces. This depends on the 5% waterplane-area threshold in `hull_shell`, so a CAD change could break every later cell.
-- **Hull and rig windage are ignored in the force balance.** `air_side` and `air_front` are computed but never used, so there is no hull windage drag or heeling moment. The notebook text says so, but the effect is not quantified, and it matters most upwind and in the survival case.
-- **Wave-making depends strongly on the transom fairing.** `taper_in` (0.2 m) moves the wave resistance at the required speed across a wide band (the plot shows 0 to 0.45 m). The force balance and the speed margin inherit that spread, so run the summary at both ends.
+- **Keel and rudder labelling.** The hull was imported unflipped, so the bow pointed to -x and the "rudder" sat toward the wrong end. The hull importer now flips by default (`flip=True` for the hull form), and fins are sorted and labelled by area (keel is the larger), not by position. Keel at x = 0.93 m, rudder at x = 0.35 m.
+- **Draft, mass and displaced volume.** `draft_in` is gone. `draft` is solved from `mass_in` (hull mass, no rig) with `solve_draft`, so resistance, windage and stability share one waterline. The mass, KG, LCG and TCG inputs moved up to the Hydrostatics section.
+- **Total mass and CG.** A new "All-up mass and stability" cell after the structural loads adds the rig (spar + skin at the sail centroid, fixed allowance at the step) to the hull, recomputes the GZ curve and reports the shift in draft, GM and righting moment. The Design Summary survival row now uses it. It is a one-way correction: resistance, the force balance and the structural loads still use the hull-only waterline and righting moment.
+- **Hull windage.** The hull's frontal and side areas are now in the force balance (drag, side force and heeling moment, with placeholder drag coefficients 0.6 and 1.0) and in the survival heeling moment. At the design wind the effect is under 2% of speed and 0.2 deg of heel; in survival it adds about 8 N m.
+- **Transom fairing.** A sensitivity cell reruns the sweeps with 0 m and 0.45 m fairing, and the Design Summary shows the range beside the three speed rows.
+- **Exactly two fins.** The guard stays, with a message that explains the cause. `hull_shell` gives two fins for thresholds of about 3% to 20%, so the 5% default is not fragile, but it fails below about 3%.
+
+Still open:
+
+- **Hull windage drag coefficients** (`hull_cdf_in`, `hull_cds_in`) are guesses.
+- **The all-up correction is not iterated.** If the rig mass becomes large, move the draft and righting moment into the structural loads.
+- **Fairing spread is large.** Best speed at the 6 kn minimum wind runs from about 0.8 kn (unfaired) to 1.8 kn (0.45 m), so the minimum-wind result depends mostly on the stern treatment.
 
 ## P3: Model fidelity (known simplifications)
 

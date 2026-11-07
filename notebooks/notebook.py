@@ -60,7 +60,7 @@ def _():
     ], dtype=float)  # proper rotation (+90 deg about x), no mirroring
 
 
-    def geometry_form(name, filename, center=True):
+    def geometry_form(name, filename, center=True, flip=False):
         """One UI element holding every import setting for an STL."""
         return mo.ui.dictionary({
             "file": mo.ui.file(filetypes=[".stl"], label=f"Upload {name} STL"),
@@ -71,7 +71,7 @@ def _():
                 {"mm": 0.001, "cm": 0.01, "m": 1.0, "in": 0.0254}, value="mm", label="STL units"),
             "axes": mo.ui.dropdown(
                 ["SolidWorks (Y-up)", "Z-up (as exported)"], value="Z-up (as exported)", label="Export axes"),
-            "flip": mo.ui.checkbox(label="Flip bow/stern (rotate 180 deg about vertical)"),
+            "flip": mo.ui.checkbox(value=flip, label="Flip bow/stern (rotate 180 deg about vertical)"),
             "center": mo.ui.checkbox(
                 value=center, label="Recenter: x=0 at stern, y=0 on centerline, z=0 at keel tip"),
         })
@@ -107,14 +107,14 @@ def _():
 def _():
     mo.md(r"""
     ### Hull Import
-    Imports the 3D CAD model of the complete underwater body (hull, keel and rudder in one STL) for analysis. After import the model is placed in the notebook frame (x forward, y to port, z up, metres), with x = 0 at the stern, y = 0 on the centerline and **z = 0 at the keel tip**. Every height in the notebook (waterline height, KG, VCB) is measured up from that point, not from the bottom of the hull shell.
+    Imports the 3D CAD model of the complete underwater body (hull, keel and rudder in one STL) for analysis. The STL is exported bow toward -x, so the importer flips it by default to put the bow at +x; keel and rudder are told apart by planform area, not position. After import the model is placed in the notebook frame (x forward, y to port, z up, metres), with x = 0 at the stern, y = 0 on the centerline and **z = 0 at the keel tip**. Every height in the notebook (waterline height, KG, VCB) is measured up from that point, not from the bottom of the hull shell.
     """)
     return
 
 
 @app.cell
 def _(geometry_form):
-    hull_form = geometry_form("hull", "Hull Form.STL")
+    hull_form = geometry_form("hull", "Hull Form.STL", flip=True)
     hull_form
     return (hull_form,)
 
@@ -170,17 +170,23 @@ def _(hull):
 def _():
     mo.md(r"""
     ## Hydrostatics
-    Runs hydrostatic calculations on the imported geometry. The waterline height is measured up from the keel tip, so the keel is wetted first and the hull shell only enters the water higher up. Displaced volume, wetted surface and the centre of buoyancy include the keel and rudder, while the waterplane (area, LWL, BWL, inertias) is whatever the waterline cuts, so it is only the hull shell once the waterline is above the top of the keel and rudder.
+    Runs hydrostatic calculations on the imported geometry. The upright waterline is not an input: it is solved from the hull mass so that the displaced volume matches it, and every later section uses that one draft (the rig mass is added separately, in the All-up mass check after the structural loads). The waterline height is measured up from the keel tip, so the keel is wetted first and the hull shell only enters the water higher up. Displaced volume, wetted surface and the centre of buoyancy include the keel and rudder, while the waterplane (area, LWL, BWL, inertias) is whatever the waterline cuts, so it is only the hull shell once the waterline is above the top of the keel and rudder.
     """)
     return
 
 
 @app.cell
 def _():
-    draft_in = mo.ui.number(
-        start=0.0, stop=2.0, step=0.005, value=0.668,
-        label="Draft at midship (m above keel)",
-    )
+    mass_in = mo.ui.number(start=1.0, stop=5000.0, step=0.5, value=80.0, label="Hull mass, without the rig (kg)")
+    kg_in = mo.ui.number(start=0.0, stop=2.0, step=0.005, value=0.15, label="Hull KG: CG above keel (m)")
+    lcg_in = mo.ui.number(start=0.0, stop=20.0, step=0.01, value=1.1, label="Hull LCG from stern (m)")
+    tcg_in = mo.ui.number(start=-1.0, stop=1.0, step=0.001, value=0.0, label="Hull TCG, + port (m)")
+    mo.hstack([mass_in, kg_in, lcg_in, tcg_in], justify="start")
+    return kg_in, lcg_in, mass_in, tcg_in
+
+
+@app.cell
+def _():
     heel_in = mo.ui.number(start=-90, stop=90, step=0.5, value=0.0, label="Heel (deg, + = starboard down)")
     trim_in = mo.ui.number(start=-30, stop=30, step=0.1, value=0.0, label="Trim (deg, + = bow down)")
     rho_in = mo.ui.dropdown(
@@ -188,10 +194,65 @@ def _():
         value="Sea water (1025)",
         label="Water density",
     )
-    mo.vstack([
-        mo.hstack([draft_in, heel_in, trim_in, rho_in], justify="start"),
-    ])
-    return draft_in, heel_in, rho_in, trim_in
+    mo.hstack([heel_in, trim_in, rho_in], justify="start")
+    return heel_in, rho_in, trim_in
+
+
+@app.cell
+def _(hydrostatics):
+    from scipy.optimize import brentq
+
+
+    def submerged_volume(hull, draft, heel_deg, trim_deg):
+        """Volume below z = draft after heeling/trimming about the keel-level midship pivot."""
+        pivot = [hull.bounds[:, 0].mean(), 0.0, 0.0]
+        R = trimesh.transformations.rotation_matrix
+        M = R(np.radians(trim_deg), [0, 1, 0], pivot) @ R(np.radians(heel_deg), [1, 0, 0], pivot)
+        rot = hull.copy()
+        rot.apply_transform(M)
+        if rot.bounds[0, 2] >= draft:
+            return 0.0
+        if rot.bounds[1, 2] <= draft:
+            return hull.volume
+        return rot.slice_plane([0, 0, draft], [0, 0, -1], cap=True).volume
+
+
+    def solve_draft(hull, target_volume, heel_deg, trim_deg):
+        """Waterline height (z, pivot at keel) whose submerged volume equals target_volume."""
+        span = float(np.linalg.norm(hull.extents))
+        return brentq(
+            lambda d: submerged_volume(hull, d, heel_deg, trim_deg) - target_volume,
+            -span, span, xtol=1e-7,
+        )
+
+
+    def gz_curve(hull, mass, rho, cg, heels, trim_deg=0.0):
+        """GZ at constant displacement (waterline height solved per heel, trim held fixed).
+
+        cg is the hull-fixed (LCG, TCG, KG). GZ = horizontal (y) offset of the
+        centre of gravity from the centre of buoyancy; positive = righting.
+        """
+        target = mass / rho
+        if target >= hull.volume:
+            raise ValueError("Mass exceeds the buoyancy of the fully submerged hull.")
+        rows = []
+        for h in heels:
+            d = solve_draft(hull, target, h, trim_deg)
+            s = hydrostatics(hull, d, h, trim_deg, rho, pivot_z=0.0)
+            g_earth = (s["M"] @ np.append(cg, 1.0))[:3]
+            rows.append(dict(heel=h, draft=d, gz=g_earth[1] - s["cb_earth"][1],
+                             cb=s["cb_earth"], volume=s["volume"]))
+        return rows
+
+    return brentq, gz_curve, solve_draft
+
+
+@app.cell
+def _(hull, mass_in, rho_in, solve_draft):
+    draft = solve_draft(hull, mass_in.value / rho_in.value, 0.0, 0.0)
+    mo.md(f"Upright waterline **{draft:.4f} m** above the keel tip: the draft at which the hull displaces the {mass_in.value:.1f} kg hull mass. "
+          "Resistance, windage, rig heights and the GZ curve all use this one waterline.")
+    return (draft,)
 
 
 @app.cell
@@ -306,7 +367,7 @@ def _(hull, hull_shell):
 
 @app.cell
 def _(
-    draft_in,
+    draft,
     heel_in,
     hull,
     hull_body,
@@ -315,7 +376,7 @@ def _(
     rho_in,
     trim_in,
 ):
-    hs = hydrostatics(hull, draft_in.value, heel_in.value, trim_in.value, rho_in.value, shell=hull_body)
+    hs = hydrostatics(hull, draft, heel_in.value, trim_in.value, rho_in.value, shell=hull_body)
     mo.stop(hs is None, mo.callout(
         "Draft puts the hull fully out of, or fully under, the water - nothing to compute.",
         kind="warn"))
@@ -350,11 +411,11 @@ def _(
 
 
 @app.cell
-def _(draft_in, hs):
+def _(draft, hs):
     _h, _s = hs["rot"], hs["sub"]
     _b = _h.bounds
     _xs, _ys = [_b[0, 0], _b[1, 0]], [_b[0, 1], _b[1, 1]]
-    _z = draft_in.value
+    _z = draft
     _fig = go.Figure([
         go.Mesh3d(x=_h.vertices[:, 0], y=_h.vertices[:, 1], z=_h.vertices[:, 2],
                   i=_h.faces[:, 0], j=_h.faces[:, 1], k=_h.faces[:, 2],
@@ -432,13 +493,13 @@ def _():
         """Wetted areas and lateral plane of the upright hull below z = draft.
 
         z_bot is the hull-shell cut height (`hull_shell`); faces below it are fins,
-        sorted fore to aft (keel, then rudder).
+        sorted by size, largest first (keel, then rudder; position is not used).
         """
         sub = hull.slice_plane([0, 0, draft], [0, 0, -1], cap=False)
         low = sub.triangles_center[:, 2] < z_bot
         shell = sub.submesh([np.where(~low)[0]], append=True)
         fins = sorted(sub.submesh([np.where(low)[0]], append=True).split(only_watertight=False),
-                      key=lambda f: -f.bounds[0, 0])  # bow is +x, so descending x is fore to aft
+                      key=lambda f: -f.area)  # largest first: the keel is the bigger fin
         prof = profile_union(sub)
         return dict(
             sub=sub, profile=prof, shell_wetted=shell.area, total_wetted=sub.area,
@@ -450,11 +511,13 @@ def _():
 
 
 @app.cell
-def _(draft_in, hull, hull_body_z, underwater_profile):
-    up = underwater_profile(hull, draft_in.value, hull_body_z)
+def _(draft, hull, hull_body_z, underwater_profile):
+    up = underwater_profile(hull, draft, hull_body_z)
     mo.stop(len(up["fins"]) != 2, mo.callout(
-        f"Expected 2 fins (keel, rudder) below z={hull_body_z:.3f} m but found {len(up['fins'])}.", kind="warn"))
-    keel_p, rudder_p = up["fins"]
+        f"Expected 2 fins (keel, rudder) below the shell cut z={hull_body_z:.3f} m but found {len(up['fins'])}. "
+        "The cut comes from `hull_shell` (5% of the maximum waterplane area); it gives two fins for thresholds of "
+        "about 3% to 20%, so check the CAD or change `frac` there.", kind="warn"))
+    keel_p, rudder_p = up["fins"]  # largest first, so the keel is the bigger fin
     _rows = [
         ("Wetted: hull shell (m^2)", up["shell_wetted"], ".4f"),
         ("Wetted: keel (m^2)", keel_p["wetted"], ".4f"),
@@ -483,13 +546,13 @@ def _(draft_in, hull, hull_body_z, underwater_profile):
 
 
 @app.cell
-def _(draft_in, up):
+def _(draft, up):
     _fig, _ax = plt.subplots(figsize=(8, 3))
     _geoms = up["profile"].geoms if hasattr(up["profile"], "geoms") else [up["profile"]]
     for _g in _geoms:
         _x, _y = _g.exterior.xy
         _ax.fill(_x, _y, color="steelblue", alpha=0.6)
-    _ax.axhline(draft_in.value, color="deepskyblue", ls="--", lw=1, label="waterline")
+    _ax.axhline(draft, color="deepskyblue", ls="--", lw=1, label="waterline")
     _ax.plot(up["clp_x"], up["clp_z"], "r+", ms=12, mew=2, label="CLP")
     _ax.set_aspect("equal")
     _ax.set_xlabel("x from stern (m)")
@@ -505,21 +568,21 @@ def _(draft_in, up):
 def _():
     mo.md(r"""
     ### Windage and Freeboard
-    The hull above the waterline, upright at the draft set above, projected onto the centerline plane (**side** area, for leeway and the lateral wind force) and onto the transverse plane (**frontal** area, for head-on drag). Centroids are given above the waterline, because their height is the arm of the wind heeling moment. Freeboard is the top of the hull at a station minus the waterline height. Only the hull is counted here, so the rig and any crew or equipment on deck are not.
+    The hull above the waterline, upright at the solved draft, projected onto the centerline plane (**side** area, for leeway and the lateral wind force) and onto the transverse plane (**frontal** area, for head-on drag). Centroids are given above the waterline, because their height is the arm of the wind heeling moment. Freeboard is the top of the hull at a station minus the waterline height. Only the hull is counted here, so the rig and any crew or equipment on deck are not.
     """)
     return
 
 
 @app.cell
-def _(draft_in, hull, profile_union):
-    air = hull.slice_plane([0, 0, draft_in.value], [0, 0, 1], cap=False)
+def _(draft, hull, profile_union):
+    air = hull.slice_plane([0, 0, draft], [0, 0, 1], cap=False)
     air_side = profile_union(air, (0, 2))
     air_front = profile_union(air, (1, 2))
     _x0, _x1 = hull.bounds[0, 0], hull.bounds[1, 0]
     fb_x = np.linspace(_x0, _x1, 121)[1:-1]
     fb_top = np.array([np.vstack(hull.section(plane_origin=[x, 0, 0], plane_normal=[1, 0, 0]).discrete)[:, 2].max()
                        for x in fb_x])
-    fb = fb_top - draft_in.value
+    fb = fb_top - draft
 
 
     def _fb_at(frac):
@@ -530,13 +593,13 @@ def _(draft_in, hull, profile_union):
     _rows = [
         ("Side (lateral) area above waterline (m^2)", air_side.area, ".4f"),
         ("Side area centroid: x from stern (m)", air_side.centroid.x, ".4f"),
-        ("Side area centroid: height above waterline (m)", air_side.centroid.y - draft_in.value, ".4f"),
+        ("Side area centroid: height above waterline (m)", air_side.centroid.y - draft, ".4f"),
         ("Frontal area above waterline (m^2)", air_front.area, ".4f"),
-        ("Frontal area centroid: height above waterline (m)", air_front.centroid.y - draft_in.value, ".4f"),
+        ("Frontal area centroid: height above waterline (m)", air_front.centroid.y - draft, ".4f"),
         ("Frontal area centroid: y, + port (m)", air_front.centroid.x, ".4f"),
         ("Freeboard at 5% / 50% / 95% of length (m)", f"{_fb_at(0.05):.4f} / {_fb_at(0.5):.4f} / {_fb_at(0.95):.4f}", ""),
         ("Minimum freeboard (m)", f"{fb[_i]:.4f} at x = {fb_x[_i]:.3f} m", ""),
-        ("Highest point above waterline (m)", hull.bounds[1, 2] - draft_in.value, ".4f"),
+        ("Highest point above waterline (m)", hull.bounds[1, 2] - draft, ".4f"),
     ]
     mo.ui.table([{"Property": k, "Value": format(v, f) if f else v} for k, v, f in _rows],
                 selection=None, pagination=False)
@@ -544,12 +607,12 @@ def _(draft_in, hull, profile_union):
 
 
 @app.cell
-def _(air_front, air_side, draft_in):
+def _(air_front, air_side, draft):
     _fig, _axs = plt.subplots(1, 2, figsize=(10, 3))
     for _ax, _g, _lab in [(_axs[0], air_side, "x from stern (m)"), (_axs[1], air_front, "y, + port (m)")]:
         for _p in (_g.geoms if hasattr(_g, "geoms") else [_g]):
             _ax.fill(*_p.exterior.xy, color="steelblue", alpha=0.6)
-        _ax.axhline(draft_in.value, color="deepskyblue", ls="--", lw=1)
+        _ax.axhline(draft, color="deepskyblue", ls="--", lw=1)
         _ax.plot(_g.centroid.x, _g.centroid.y, "r+", ms=12, mew=2)
         _ax.set_aspect("equal")
         _ax.set_xlabel(_lab)
@@ -591,8 +654,8 @@ def _(Polygon, reduce, shapely):
 
 
 @app.cell
-def _(draft_in, half_breadth, hs, hull_body, section_area):
-    shell_sub = hull_body.slice_plane([0, 0, draft_in.value], [0, 0, -1], cap=True)
+def _(draft, half_breadth, hs, hull_body, section_area):
+    shell_sub = hull_body.slice_plane([0, 0, draft], [0, 0, -1], cap=True)
     _wp = hs["wp"]
     _x0, _x1 = _wp["geom"].bounds[0], _wp["geom"].bounds[2]
     _lwl = _x1 - _x0
@@ -645,66 +708,10 @@ def _():
 
 @app.cell
 def _():
-    mass_in = mo.ui.number(start=1.0, stop=5000.0, step=0.5, value=80.0, label="Mass (kg)")
-    kg_in = mo.ui.number(start=0.0, stop=2.0, step=0.005, value=0.15, label="KG: CG above keel (m)")
-    lcg_in = mo.ui.number(start=0.0, stop=20.0, step=0.01, value=1.1, label="LCG from stern (m)")
-    tcg_in = mo.ui.number(start=-1.0, stop=1.0, step=0.001, value=0.0, label="TCG, + port (m)")
     heelmax_in = mo.ui.number(start=10, stop=180, step=5, value=90, label="Max heel (deg)")
     heelstep_in = mo.ui.number(start=0.5, stop=10, step=0.5, value=5, label="Heel step (deg)")
-    mo.vstack([
-        mo.hstack([mass_in, kg_in, lcg_in, tcg_in], justify="start"),
-        mo.hstack([heelmax_in, heelstep_in], justify="start"),
-    ])
-    return heelmax_in, heelstep_in, kg_in, lcg_in, mass_in, tcg_in
-
-
-@app.cell
-def _(hydrostatics):
-    from scipy.optimize import brentq
-
-
-    def submerged_volume(hull, draft, heel_deg, trim_deg):
-        """Volume below z = draft after heeling/trimming about the keel-level midship pivot."""
-        pivot = [hull.bounds[:, 0].mean(), 0.0, 0.0]
-        R = trimesh.transformations.rotation_matrix
-        M = R(np.radians(trim_deg), [0, 1, 0], pivot) @ R(np.radians(heel_deg), [1, 0, 0], pivot)
-        rot = hull.copy()
-        rot.apply_transform(M)
-        if rot.bounds[0, 2] >= draft:
-            return 0.0
-        if rot.bounds[1, 2] <= draft:
-            return hull.volume
-        return rot.slice_plane([0, 0, draft], [0, 0, -1], cap=True).volume
-
-
-    def solve_draft(hull, target_volume, heel_deg, trim_deg):
-        """Waterline height (z, pivot at keel) whose submerged volume equals target_volume."""
-        span = float(np.linalg.norm(hull.extents))
-        return brentq(
-            lambda d: submerged_volume(hull, d, heel_deg, trim_deg) - target_volume,
-            -span, span, xtol=1e-7,
-        )
-
-
-    def gz_curve(hull, mass, rho, cg, heels, trim_deg=0.0):
-        """GZ at constant displacement (waterline height solved per heel, trim held fixed).
-
-        cg is the hull-fixed (LCG, TCG, KG). GZ = horizontal (y) offset of the
-        centre of gravity from the centre of buoyancy; positive = righting.
-        """
-        target = mass / rho
-        if target >= hull.volume:
-            raise ValueError("Mass exceeds the buoyancy of the fully submerged hull.")
-        rows = []
-        for h in heels:
-            d = solve_draft(hull, target, h, trim_deg)
-            s = hydrostatics(hull, d, h, trim_deg, rho, pivot_z=0.0)
-            g_earth = (s["M"] @ np.append(cg, 1.0))[:3]
-            rows.append(dict(heel=h, draft=d, gz=g_earth[1] - s["cb_earth"][1],
-                             cb=s["cb_earth"], volume=s["volume"]))
-        return rows
-
-    return brentq, gz_curve
+    mo.hstack([heelmax_in, heelstep_in], justify="start")
+    return heelmax_in, heelstep_in
 
 
 @app.cell
@@ -850,7 +857,7 @@ def _(avs_angle, df_angle, gz_heel, gz_val):
 def _():
     mo.md(r"""
     ### Metacentric Heights
-    Initial stability and trim response at the draft, heel and trim set above, for the centre of gravity set in the GZ section (`KG`). `KMt = KB + BMt` and `KML = KB + BML` come from the waterplane inertias, and `GM = KM - KG`. `MCT1cm = displacement x GML / (100 x LWL)` is the moment needed to change trim by 1 cm over the waterline length. The displacement here is the one at the draft input, which may differ from the mass entered for the GZ curve.
+    Initial stability and trim response at the solved draft, with the heel and trim set above, for the centre of gravity set in the GZ section (`KG`). `KMt = KB + BMt` and `KML = KB + BML` come from the waterplane inertias, and `GM = KM - KG`. `MCT1cm = displacement x GML / (100 x LWL)` is the moment needed to change trim by 1 cm over the waterline length. The displacement here equals the hull mass, because the draft is solved from it.
     """)
     return
 
@@ -977,7 +984,7 @@ def _():
 
 @app.cell
 def _(
-    draft_in,
+    draft,
     hs,
     hull,
     hull_body,
@@ -994,7 +1001,7 @@ def _(
 ):
     _m, _g = mass_in.value, 9.80665
     _beam, _len = hull.extents[1], hull.extents[0]
-    _wl = draft_in.value
+    _wl = draft
     _subv = hull.slice_plane([0, 0, _wl], [0, 0, -1], cap=True)
 
 
@@ -1056,7 +1063,7 @@ def _(hull):
 def _(
     air_side,
     airdraft_in,
-    draft_in,
+    draft,
     fb_top,
     fb_x,
     hs,
@@ -1070,7 +1077,7 @@ def _(
 ):
     _deck = float(np.interp(step_x_in.value, fb_x, fb_top))
     mast_step = np.array([step_x_in.value, step_y_in.value, _deck + step_dz_in.value])
-    _wl = draft_in.value
+    _wl = draft
     _lwl = hs["wp"]["lwl"]
     _rows = [
         ("Mast step (x, y, z) in hull frame (m)", ", ".join(f"{v:.4f}" for v in mast_step)),
@@ -1241,7 +1248,7 @@ def _(
     airdraft_in,
     days_in,
     dist_in,
-    draft_in,
+    draft,
     gz_heel,
     hs,
     mass_in,
@@ -1254,7 +1261,7 @@ def _(
     vsurv_in,
 ):
     v_req = dist_in.value / (days_in.value * 24.0)  # required average speed, kn
-    _rig_h = draft_in.value + airdraft_in.value - mast_step[2]
+    _rig_h = draft + airdraft_in.value - mast_step[2]
     _heel_cap = use_angle if use_angle is not None else gz_heel[-1]
     _lwl = hs["wp"]["lwl"]
     _rows = [
@@ -1385,7 +1392,7 @@ def _():
 
     taken over the body below the waterline (`z <= 0`). Substituting `lambda = cosh u` removes the singularity at `lambda = 1`. The offsets are sampled on a grid, treated as piecewise linear, and the exponential weights are integrated exactly over each cell, so the result does not depend on how fine the vertical grid is relative to the wave decay depth.
 
-    The implementation was checked on a Wigley hull, where it converges with grid and integration limits and shows the known humps and hollows near `Fn` = 0.3, 0.35 and 0.5. **It is still thin-ship theory.** It assumes small hull slopes, ignores viscosity, sinkage and trim, and is known to overpredict the humps and miss the hollows between them for real hulls. It also assumes the hull is upright at the draft set above.
+    The implementation was checked on a Wigley hull, where it converges with grid and integration limits and shows the known humps and hollows near `Fn` = 0.3, 0.35 and 0.5. **It is still thin-ship theory.** It assumes small hull slopes, ignores viscosity, sinkage and trim, and is known to overpredict the humps and miss the hollows between them for real hulls. It also assumes the hull is upright at the solved draft.
 
     **The transom needs a decision.** Taken literally, the blunt stern is a vertical wall that the theory sees as a strong wave maker, even at speeds where the real transom is dry. The **transom fairing length** therefore extends the stern aft as a linear taper to zero beam, standing in for the hollow a dry transom leaves in the wake. The result is sensitive to it, so the plot shades the range from no fairing to a 0.45 m fairing. Use the result for the trend with speed rather than for exact values.
     """)
@@ -1393,7 +1400,7 @@ def _():
 
 
 @app.cell
-def _(Polygon, draft_in, form, hs, hull, reduce, shapely):
+def _(Polygon, draft, form, hs, hull, reduce, shapely):
     def michell_offsets(body, wl, nx=80, nz=30):
         """Half-breadth grid b[i, j] of `body` below the waterline wl, at stations x[i] and heights z[j] (relative to wl)."""
         sub = body.slice_plane([0, 0, wl], [0, 0, -1], cap=True)
@@ -1419,7 +1426,7 @@ def _(Polygon, draft_in, form, hs, hull, reduce, shapely):
         return x, z, b
 
 
-    mich_x, mich_z, mich_b = michell_offsets(hull, draft_in.value)
+    mich_x, mich_z, mich_b = michell_offsets(hull, draft)
     _slope = np.abs(np.gradient(mich_b, mich_x, axis=0)).max()
     mo.md(
         f"Offset grid: {len(mich_x)} stations by {len(mich_z)} levels. Largest hull slope |db/dx| = **{_slope:.2f}** "
@@ -1562,7 +1569,7 @@ def _(
         mo.ui.table(_rows, selection=None, pagination=False),
         _fig,
     ])
-    return (total_resistance,)
+    return fair_blunt_end, total_resistance
 
 
 @app.cell(hide_code=True)
@@ -1660,7 +1667,7 @@ def _():
 @app.cell
 def _(
     airdraft_in,
-    draft_in,
+    draft,
     mast_step,
     sail_ar_in,
     sail_area_in,
@@ -1679,7 +1686,7 @@ def _(
 
 
     sail = sail_planform(sail_area_in.value, sail_ar_in.value, sail_taper_in.value)
-    _rig_h = draft_in.value + airdraft_in.value - mast_step[2]
+    _rig_h = draft + airdraft_in.value - mast_step[2]
     _rows = [
         ("Span b (m)", f"{sail['b']:.3f}",
          f"{_rig_h:.3f} m available above the step: " + ("OK" if sail["b"] <= _rig_h else "EXCEEDS")),
@@ -1721,7 +1728,7 @@ def _(
     KNOT,
     air_temp_in,
     alpha_in,
-    draft_in,
+    draft,
     mast_step,
     rho_air,
     sail,
@@ -1751,7 +1758,7 @@ def _(
 
     _T = air_temp_in.value + 273.15
     nu_air = 1.716e-5 * (_T / 273.15) ** 1.5 * (273.15 + 110.4) / (_T + 110.4) / rho_air
-    sail_z = mast_step[2] - draft_in.value + sail["z_mac"]  # height of the MAC above the waterline
+    sail_z = mast_step[2] - draft + sail["z_mac"]  # height of the MAC above the waterline
     v_sail = float(wind_at(sail_z, vdes_in.value * KNOT, zref_in.value, alpha_in.value))
     re_sail = v_sail * sail["mac"] / nu_air
     sec = section_polar(sail_tc_in.value / 100, re_sail)
@@ -1972,7 +1979,7 @@ def _(
     G,
     KNOT,
     dcf_in,
-    draft_in,
+    draft,
     gz_heel,
     gz_val,
     mass_in,
@@ -2032,7 +2039,7 @@ def _(
         ce_h = 4 * sail_["b"] / (3 * np.pi)
         return {
             "sail": sail_, "polar": extend_polar(sp_, sail_, cn_, ar_eff),
-            "ce_wl": mast_step[2] - draft_in.value + ce_h,  # lift centroid above the waterline
+            "ce_wl": mast_step[2] - draft + ce_h,  # lift centroid above the waterline
             "arm": mast_step[2] + ce_h - up["clp_z"],  # lift centroid above the CLP
         }
 
@@ -2061,12 +2068,25 @@ def _(
 
 
 @app.cell
+def _():
+    hull_cdf_in = mo.ui.number(start=0.0, stop=2.0, step=0.05, value=0.6, label="Hull frontal drag coefficient")
+    hull_cds_in = mo.ui.number(start=0.0, stop=2.0, step=0.05, value=1.0, label="Hull side drag coefficient")
+    mo.hstack([hull_cdf_in, hull_cds_in], justify="start")
+    return hull_cdf_in, hull_cds_in
+
+
+@app.cell
 def _(
+    air_front,
+    air_side,
     alpha_in,
     appendage_side_force,
     arf_in,
     brentq,
+    draft,
     heel_for,
+    hull_cdf_in,
+    hull_cds_in,
     mast_step,
     res_R,
     res_v,
@@ -2081,10 +2101,23 @@ def _(
     wind_at,
     zref_in,
 ):
-    def balance(twa, alpha, v_ref, rig=rig0):
-        """Equilibrium of the boat at true wind angle twa (deg), sail angle of attack alpha (deg), wind v_ref (m/s at z_ref)."""
+    hull_wind = dict(
+        Af=air_front.area, As=air_side.area,
+        z_wl=air_side.centroid.y - draft,           # height of the side-area centroid above the waterline
+        arm=air_side.centroid.y - up["clp_z"],      # ... and above the CLP
+        x=air_side.centroid.x,
+    )
+
+
+    def balance(twa, alpha, v_ref, rig=rig0, resist=None, hw=True):
+        """Equilibrium of the boat at true wind angle twa (deg), sail angle of attack alpha (deg), wind v_ref (m/s at z_ref).
+
+        resist: calm-water resistance at res_v (default res_R). hw: include the windage of the hull above the waterline.
+        """
         pol = rig["polar"]
+        R_tab = res_R if resist is None else resist
         vt = float(wind_at(rig["ce_wl"], v_ref, zref_in.value, alpha_in.value))
+        vh = float(wind_at(hull_wind["z_wl"], v_ref, zref_in.value, alpha_in.value))
         cl, cd = np.interp(alpha, pol["alpha"], pol["CL"]), np.interp(alpha, pol["alpha"], pol["CD"])
         t = np.radians(twa)
 
@@ -2093,15 +2126,22 @@ def _(
             aws, awa = np.hypot(ax, ay), np.arctan2(ay, ax)
             qS = 0.5 * rho_air * aws**2 * rig["sail"]["S"]
             L, D = qS * cl, qS * cd
-            Fx, Fy = L * np.sin(awa) - D * np.cos(awa), abs(L * np.cos(awa) + D * np.sin(awa))
+            Fx_s, Fy_s = L * np.sin(awa) - D * np.cos(awa), abs(L * np.cos(awa) + D * np.sin(awa))
+            # hull windage: drag on the frontal and side areas from the wind components along the boat axes at hull height
+            hx, hy = vh * np.cos(t) + V, vh * np.sin(t)
+            Fx_h = -0.5 * rho_air * hull_cdf_in.value * hull_wind["Af"] * hx * abs(hx) if hw else 0.0
+            Fy_h = 0.5 * rho_air * hull_cds_in.value * hull_wind["As"] * hy * abs(hy) if hw else 0.0
+            Fx, Fy = Fx_s + Fx_h, Fy_s + Fy_h
+            M_heel = Fy_s * rig["arm"] + Fy_h * hull_wind["arm"]
             phi = 0.0
             for _ in range(6):
-                phi, over = heel_for(Fy * rig["arm"] * np.cos(np.radians(phi)))
+                phi, over = heel_for(M_heel * np.cos(np.radians(phi)))
             Y1 = float(appendage_side_force(V, 1.0, up["fins"], rho_in.value, arf_in.value)[0])
             lee = min(Fy * np.cos(np.radians(phi)) / Y1, 12.0)
             Di = float(appendage_side_force(V, lee, up["fins"], rho_in.value, arf_in.value)[1])
-            net = Fx * np.cos(np.radians(phi)) - float(np.interp(V, res_v, res_R)) - Di
-            return net, dict(V=V, aws=aws, awa=np.degrees(awa), Fx=Fx, Fy=Fy, heel=phi, over=over, lee=lee, Di=Di)
+            net = Fx * np.cos(np.radians(phi)) - float(np.interp(V, res_v, R_tab)) - Di
+            return net, dict(V=V, aws=aws, awa=np.degrees(awa), Fx=Fx, Fy=Fy, Fy_s=Fy_s, Fy_h=Fy_h, Fx_h=Fx_h,
+                             heel=phi, over=over, lee=lee, Di=Di)
 
         lo, hi = 1e-3, res_v[-1]
         if state(lo)[0] <= 0:
@@ -2113,9 +2153,9 @@ def _(
         return out | dict(alpha=alpha, twa=twa, vt=vt)
 
 
-    def best_trim(twa, v_ref, max_heel, rig=rig0):
+    def best_trim(twa, v_ref, max_heel, rig=rig0, resist=None, hw=True):
         """Angle of attack giving the highest speed with heel within the limit (least heel if none does)."""
-        rs = [balance(twa, a, v_ref, rig) for a in trim_alphas]
+        rs = [balance(twa, a, v_ref, rig, resist, hw) for a in trim_alphas]
         ok = [r for r in rs if r["heel"] <= max_heel and not r["over"]]
         return max(ok, key=lambda r: r["V"]) if ok else min(rs, key=lambda r: r["heel"])
 
@@ -2128,11 +2168,11 @@ def _(
         lead = x_ce - up["clp_x"]
         if r["V"] <= 0:
             return lead, np.nan
-        f_rud = r["Fy"] * np.cos(np.radians(r["heel"])) * lead / rudder_arm
+        f_rud = (r["Fy_s"] * lead + r["Fy_h"] * (hull_wind["x"] - up["clp_x"])) * np.cos(np.radians(r["heel"])) / rudder_arm
         y1 = float(appendage_side_force(r["V"], 1.0, [rudder_f], rho_in.value, arf_in.value)[0])
         return lead, f_rud / y1
 
-    return best_trim, helm
+    return balance, best_trim, helm, hull_wind
 
 
 @app.cell
@@ -2220,6 +2260,81 @@ def _(
     return (sail_runs,)
 
 
+@app.cell
+def _(
+    KNOT,
+    best_trim,
+    dcf_in,
+    fair_blunt_end,
+    maxheel_in,
+    mich_b,
+    mich_x,
+    nu_in,
+    res_v,
+    rho_in,
+    sail_runs,
+    taper_in,
+    total_resistance,
+    twa_min_in,
+    twa_step_in,
+    up,
+    wind_states,
+):
+    _twas = np.arange(twa_min_in.value, 180.01, twa_step_in.value)
+    _args = (up["shell_wetted"], up["fins"], rho_in.value, nu_in.value, dcf_in.value)
+
+
+    def _speeds(runs):
+        """Best design-wind speed, slowest speed from TWA 90 deg aft, and best minimum-wind speed (kn)."""
+        d, m = runs["Design"], runs["Minimum"]
+        return dict(best=max(r["V"] for r in d) / KNOT, slow=min(r["V"] for r in d if r["twa"] >= 90) / KNOT,
+                    minwind=max(r["V"] for r in m) / KNOT)
+
+
+    taper_band = {"current": _speeds(sail_runs)}
+    for _L in (0.0, 0.45):
+        _g = (mich_x, mich_b) if _L == 0 else fair_blunt_end(mich_x, mich_b, _L)
+        _R = sum(total_resistance(res_v, *_args, wave_grid=_g))
+        taper_band[_L] = _speeds({n: [best_trim(t, wind_states[n], maxheel_in.value, resist=_R) for t in _twas]
+                                  for n in ("Design", "Minimum")})
+    _names = {"best": "Best speed, design wind (kn)", "slow": "Slowest speed, design wind, TWA 90 deg and aft (kn)",
+              "minwind": "Best speed, minimum wind (kn)"}
+    mo.vstack([
+        mo.md("**Sensitivity to the transom fairing.** The same sweeps with the stern unfaired and with a 0.45 m fairing, the two ends of the wave-resistance band."),
+        mo.ui.table([{"Speed": _names[k], "Unfaired (0 m)": f"{taper_band[0.0][k]:.2f}",
+                      f"Current ({taper_in.value:.2f} m)": f"{taper_band['current'][k]:.2f}",
+                      "Long fairing (0.45 m)": f"{taper_band[0.45][k]:.2f}"} for k in _names],
+                    selection=None, pagination=False),
+    ])
+    return (taper_band,)
+
+
+@app.cell
+def _(
+    KNOT,
+    balance,
+    hull_cdf_in,
+    hull_cds_in,
+    hull_wind,
+    sail_runs,
+    wind_states,
+):
+    _d = sail_runs["Design"]
+    _off = [balance(r["twa"], r["alpha"], wind_states["Design"], hw=False) for r in _d]
+    hull_wind_effect = dict(
+        dv=max(abs(r["V"] - o["V"]) for r, o in zip(_d, _off)) / KNOT,
+        dv_rel=max(abs(r["V"] - o["V"]) / max(o["V"], 1e-9) for r, o in zip(_d, _off)),
+        dheel=max(abs(r["heel"] - o["heel"]) for r, o in zip(_d, _off)),
+    )
+    mo.md(
+        f"**Hull windage.** The hull above the waterline has {hull_wind['Af']:.3f} m^2 frontal and {hull_wind['As']:.3f} m^2 side area "
+        f"(drag coefficients {hull_cdf_in.value:.2f} and {hull_cds_in.value:.2f}), and is in the balance above. Against a run with it switched off, "
+        f"at the design wind it changes the boat speed by at most {hull_wind_effect['dv']:.2f} kn ({hull_wind_effect['dv_rel']:.1%}) "
+        f"and the heel by at most {hull_wind_effect['dheel']:.1f} deg. Its larger effect is the survival case, in the structural loads section."
+    )
+    return
+
+
 @app.cell(hide_code=True)
 def _():
     mo.md(r"""
@@ -2242,7 +2357,7 @@ def _(
     airdraft_in,
     alpha_in,
     best_trim,
-    draft_in,
+    draft,
     make_rig,
     mast_step,
     maxheel_in,
@@ -2262,13 +2377,13 @@ def _(
     def rig_for(area, ar):
         """Force-balance rig for another sail area and aspect ratio, with the same taper, section and mast."""
         s = sail_planform(area, ar, sail_taper_in.value)
-        v = float(wind_at(mast_step[2] - draft_in.value + s["z_mac"], vdes_in.value * KNOT, zref_in.value, alpha_in.value))
+        v = float(wind_at(mast_step[2] - draft + s["z_mac"], vdes_in.value * KNOT, zref_in.value, alpha_in.value))
         p = sail_polar(sail_tc_in.value / 100, v * s["mac"] / nu_air, sail_arf_in.value * ar, sail_taper_in.value)
         cn = p["CL"] * np.cos(np.radians(p["alpha"])) + p["CD"] * np.sin(np.radians(p["alpha"]))
         return make_rig(s, p, cn, sail_arf_in.value * ar)
 
 
-    _rig_h = draft_in.value + airdraft_in.value - mast_step[2]
+    _rig_h = draft + airdraft_in.value - mast_step[2]
     _areas = np.array([0.4, 0.65, 1.0, 1.5, 2.0, 3.0, 4.0])
     _ars = [1.5, 2.5, 3.5]
     sweep = {}
@@ -2502,6 +2617,82 @@ def _(
 
 
 @app.cell
+def _(
+    G,
+    alpha_in,
+    draft,
+    fixed_in,
+    gz_curve,
+    gz_heel,
+    gz_val,
+    hull,
+    hull_cds_in,
+    hull_wind,
+    kg_in,
+    lcg_in,
+    mass_in,
+    mast_step,
+    rho_air,
+    rho_in,
+    rig_mass,
+    rm_val,
+    sail,
+    skin_mass,
+    struct,
+    tcg_in,
+    wind_at,
+    wind_states,
+    zref_in,
+):
+    _spar = rig_mass - skin_mass - fixed_in.value
+    _zbar = sail["b"] * (sail["c_root"] + 2 * sail["c_tip"]) / (3 * (sail["c_root"] + sail["c_tip"]))  # sail area centroid above the root
+    _parts = [  # (mass kg, x, y, z) in the hull frame
+        (mass_in.value, lcg_in.value, tcg_in.value, kg_in.value),
+        (_spar + skin_mass, mast_step[0], mast_step[1], mast_step[2] + _zbar),
+        (fixed_in.value, mast_step[0], mast_step[1], mast_step[2]),
+    ]
+    total_mass = sum(p[0] for p in _parts)
+    cg_all = np.array([sum(p[0] * p[i] for p in _parts) / total_mass for i in (1, 2, 3)])
+
+    gz_all = gz_curve(hull, total_mass, rho_in.value, cg_all, gz_heel)
+    gz_all_val = np.array([r["gz"] for r in gz_all])
+    draft_all = gz_all[0]["draft"]
+    _pk = int(np.argmax(gz_all_val))
+    rm_all = gz_all_val[: _pk + 1] * total_mass * G
+    rm_peak_all = float(rm_all[-1])
+
+    # survival heeling moment: the sail (structural loads) plus the hull windage, beam-on
+    _vh = float(wind_at(hull_wind["z_wl"], wind_states["Survival"], zref_in.value, alpha_in.value))
+    hull_surv_moment = 0.5 * rho_air * hull_cds_in.value * hull_wind["As"] * _vh**2 * hull_wind["arm"]
+    surv_moment = struct["Survival"]["heel_m"] + hull_surv_moment
+    _over = surv_moment >= rm_peak_all
+    _heel_surv = float(gz_heel[_pk]) if _over else float(np.interp(surv_moment, rm_all, gz_heel[: _pk + 1]))
+
+    _gm0 = float(gz_val[1] / np.sin(np.radians(gz_heel[1])))
+    _gm1 = float(gz_all_val[1] / np.sin(np.radians(gz_heel[1])))
+    _rows = [
+        ("Total mass, hull + rig (kg)", f"{total_mass:.1f}", f"hull {mass_in.value:.1f} + rig {rig_mass:.1f}"),
+        ("CG, hull only: LCG / KG (m)", f"{lcg_in.value:.3f} / {kg_in.value:.3f}", ""),
+        ("CG, hull + rig: LCG / KG (m)", f"{cg_all[0]:.3f} / {cg_all[2]:.3f}", f"rig mass at the step and at the sail centroid, {mast_step[2] + _zbar:.2f} m"),
+        ("Upright waterline with the rig (m)", f"{draft_all:.4f}", f"{(draft_all - draft) * 1e3:+.1f} mm from the {draft:.4f} m used by the sections above"),
+        ("GM from the GZ slope, hull only / with rig (m)", f"{_gm0:.3f} / {_gm1:.3f}", ""),
+        ("Peak GZ, hull only / with rig (m)", f"{gz_val.max():.3f} / {gz_all_val.max():.3f}", ""),
+        ("Peak righting moment, hull only / with rig (N m)", f"{float(rm_val[-1]):.1f} / {rm_peak_all:.1f}", ""),
+        ("Survival heeling moment: sail + hull windage (N m)", f"{surv_moment:.1f}",
+         f"sail {struct['Survival']['heel_m']:.1f} + hull {hull_surv_moment:.1f}"),
+        ("Survival margin with the rig", f"{1 - surv_moment / rm_peak_all:+.0%}",
+         "knocked down" if _over else f"steady heel {_heel_surv:.1f} deg"),
+    ]
+    mo.vstack([
+        mo.md("**All-up mass and stability.** The rig mass is added to the hull mass at the mast step and the sail centroid, and the GZ curve is recomputed for the total at constant displacement. "
+              "The sections above (resistance, force balance, structural loads) stay at the hull-only waterline and righting moment, so this is a one-way correction and is not iterated."),
+        mo.ui.table([{"Property": a, "Value": b, "Note": c} for a, b, c in _rows], selection=None, pagination=False),
+        mo.callout(f"Survival heeling moment {surv_moment:.0f} N m exceeds the peak righting moment {rm_peak_all:.0f} N m with the rig.", kind="danger") if _over else mo.md(""),
+    ])
+    return rm_peak_all, surv_moment, total_mass
+
+
+@app.cell
 def _():
     mo.md(r"""
     ## Mast Drivetrain and Motor Sizing
@@ -2654,7 +2845,7 @@ def _():
 def _(
     KNOT,
     airdraft_in,
-    draft_in,
+    draft,
     drive,
     gbox_in,
     gz_heel,
@@ -2668,12 +2859,15 @@ def _(
     mpeak_in,
     mrpm_in,
     rig_mass,
-    rm_val,
+    rm_peak_all,
     sail,
     sail_mast_in,
     sail_runs,
     sail_tc_in,
     struct,
+    surv_moment,
+    taper_band,
+    total_mass,
     use_angle,
     v_req,
 ):
@@ -2681,23 +2875,28 @@ def _(
     _reach = [r for r in _d if r["twa"] >= 90]
     _lim_lead = maxlead_in.value * hs["wp"]["lwl"]
     _heel_cap = use_angle if use_angle is not None else gz_heel[-1]
-    _rig_h = draft_in.value + airdraft_in.value - mast_step[2]
-    _surv_m = struct["Survival"]["heel_m"]
+    _rig_h = draft + airdraft_in.value - mast_step[2]
+    _surv_m = surv_moment  # sail + hull windage, against the righting moment with the rig
 
 
-    def _check(name, value, limit, ok, margin, unit=""):
+    def _check(name, value, limit, ok, margin, unit="", band=None):
         status = "FAIL" if not ok else ("MARGINAL" if margin < 0.10 else "PASS")
         return {"Criterion": name, "Result": f"{value:.2f}{unit}", "Limit": f"{limit:.2f}{unit}",
-                "Margin": f"{margin:+.0%}", "Status": status}
+                "Margin": f"{margin:+.0%}", "Status": status,
+                "Fairing 0 to 0.45 m": f"{band[0]:.2f} to {band[1]:.2f}" if band else ""}
+
+
+    def _band(key):
+        return taper_band[0.0][key], taper_band[0.45][key]
 
 
     _checks = [
         _check("Best speed, design wind (kn)", max(r["V"] for r in _d) / KNOT, v_req,
-               max(r["V"] for r in _d) / KNOT >= v_req, max(r["V"] for r in _d) / KNOT / v_req - 1),
+               max(r["V"] for r in _d) / KNOT >= v_req, max(r["V"] for r in _d) / KNOT / v_req - 1, band=_band("best")),
         _check("Slowest speed, design wind, TWA 90 deg and aft (kn)", min(r["V"] for r in _reach) / KNOT, v_req,
-               min(r["V"] for r in _reach) / KNOT >= v_req, min(r["V"] for r in _reach) / KNOT / v_req - 1),
+               min(r["V"] for r in _reach) / KNOT >= v_req, min(r["V"] for r in _reach) / KNOT / v_req - 1, band=_band("slow")),
         _check("Best speed, minimum wind (kn)", max(r["V"] for r in _m) / KNOT, v_req,
-               max(r["V"] for r in _m) / KNOT >= v_req, max(r["V"] for r in _m) / KNOT / v_req - 1),
+               max(r["V"] for r in _m) / KNOT >= v_req, max(r["V"] for r in _m) / KNOT / v_req - 1, band=_band("minwind")),
         _check("Peak steady heel, design wind (deg)", max(r["heel"] for r in _d), maxheel_in.value,
                max(r["heel"] for r in _d) <= maxheel_in.value, 1 - max(r["heel"] for r in _d) / maxheel_in.value),
         _check("Max heel inside usable stability range (deg)", maxheel_in.value, _heel_cap,
@@ -2706,7 +2905,7 @@ def _(
                max(abs(r["lead"]) for r in _d) <= _lim_lead, 1 - max(abs(r["lead"]) for r in _d) / _lim_lead),
         _check("Rig mass (kg)", rig_mass, maxrig_in.value, rig_mass <= maxrig_in.value, 1 - rig_mass / maxrig_in.value),
         _check("Rig span above the step (m)", sail["b"], _rig_h, sail["b"] <= _rig_h, 1 - sail["b"] / _rig_h),
-        _check("Survival heeling moment (N m)", _surv_m, float(rm_val[-1]), _surv_m < rm_val[-1], 1 - _surv_m / float(rm_val[-1])),
+        _check("Survival heeling moment vs righting moment with rig (N m)", _surv_m, rm_peak_all, _surv_m < rm_peak_all, 1 - _surv_m / rm_peak_all),
         _check("Survival tip deflection (% of span)", 100 * struct["Survival"]["defl"][-1] / sail["b"], 10.0,
                struct["Survival"]["defl"][-1] / sail["b"] < 0.10, 1 - 10 * struct["Survival"]["defl"][-1] / sail["b"]),
         _check("Motor continuous torque (N m)", drive["motor_hold"], mcont_in.value,
@@ -2721,7 +2920,7 @@ def _(
     _fails = [c["Criterion"] for c in _checks if c["Status"] == "FAIL"]
     _marg = [c["Criterion"] for c in _checks if c["Status"] == "MARGINAL"]
     mo.vstack([
-        mo.md(f"Sail **{sail['S']:.2f} m^2**, aspect ratio **{sail['ar']:.2f}**, NACA 00{sail_tc_in.value:.0f}, mast at {sail_mast_in.value:.0%} chord, hull mass {mass_in.value:.0f} kg."),
+        mo.md(f"Sail **{sail['S']:.2f} m^2**, aspect ratio **{sail['ar']:.2f}**, NACA 00{sail_tc_in.value:.0f}, mast at {sail_mast_in.value:.0%} chord, hull mass {mass_in.value:.0f} kg, {total_mass:.1f} kg with the {rig_mass:.1f} kg rig."),
         mo.ui.table(_checks, selection=None, pagination=False),
         mo.callout("Fails: " + "; ".join(_fails) + ".", kind="danger") if _fails
         else mo.callout("All criteria are met" + (f", with thin margins on: {'; '.join(_marg)}." if _marg else "."),
