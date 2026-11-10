@@ -866,8 +866,8 @@ def _(draft, up):
     _ax.axhline(draft, color="deepskyblue", ls="--", lw=1, label="waterline")
     _ax.plot(up["clp_x"], up["clp_z"], "r+", ms=12, mew=2, label="CLP")
     _ax.set_aspect("equal")
-    _ax.set_xlabel("x from stern (m)")
-    _ax.set_ylabel("z above keel tip (m)")
+    _ax.set_xlabel(r"$x$ from stern (m)")
+    _ax.set_ylabel(r"$z$ above keel tip (m)")
     _ax.set_title("Lateral plane (underwater profile)")
     _ax.legend(loc="upper left")
     _ax.grid(alpha=0.3)
@@ -920,14 +920,14 @@ def _(draft, hull, profile_union):
 @app.cell
 def _(air_front, air_side, draft):
     _fig, _axs = plt.subplots(1, 2, figsize=(10, 3))
-    for _ax, _g, _lab in [(_axs[0], air_side, "x from stern (m)"), (_axs[1], air_front, "y, + port (m)")]:
+    for _ax, _g, _lab in [(_axs[0], air_side, r"$x$ from stern (m)"), (_axs[1], air_front, r"$y$, + port (m)")]:
         for _p in (_g.geoms if hasattr(_g, "geoms") else [_g]):
             _ax.fill(*_p.exterior.xy, color="steelblue", alpha=0.6)
         _ax.axhline(draft, color="deepskyblue", ls="--", lw=1)
         _ax.plot(_g.centroid.x, _g.centroid.y, "r+", ms=12, mew=2)
         _ax.set_aspect("equal")
         _ax.set_xlabel(_lab)
-        _ax.set_ylabel("z above keel tip (m)")
+        _ax.set_ylabel(r"$z$ above keel tip (m)")
         _ax.grid(alpha=0.3)
     _axs[0].set_title("Side area above waterline")
     _axs[1].set_title("Frontal area above waterline")
@@ -999,8 +999,8 @@ def _(form_sac, form_x, hs):
     _ax.plot(form_x, form_sac, "-", label="section area")
     _ax.fill_between(form_x, form_sac, alpha=0.2)
     _ax.axvline(hs["cb"][0], color="r", ls="--", lw=1, label="LCB (whole body)")
-    _ax.set_xlabel("x from stern (m)")
-    _ax.set_ylabel("Section area (m^2)")
+    _ax.set_xlabel(r"$x$ from stern (m)")
+    _ax.set_ylabel(r"Section area ($\mathrm{m^2}$)")
     _ax.set_title("Sectional area curve, hull shell")
     _ax.legend()
     _ax.grid(alpha=0.3)
@@ -1080,8 +1080,8 @@ def _(gz_heel, gz_val):
     _fig, _ax = plt.subplots()
     _ax.plot(gz_heel, gz_val, "o-", ms=4, label="GZ")
     _ax.axhline(0, color="gray", lw=0.8)
-    _ax.set_xlabel("Heel angle (deg)")
-    _ax.set_ylabel("GZ (m)")
+    _ax.set_xlabel(r"Heel angle $\phi$ (deg)")
+    _ax.set_ylabel(r"$GZ$ (m)")
     _ax.set_title("GZ Curve")
     _ax.grid(alpha=0.3)
     _fig
@@ -1155,8 +1155,8 @@ def _(avs_angle, df_angle, gz_heel, gz_val):
     for _a, _c, _l in [(df_angle, "tab:orange", "downflooding"), (avs_angle, "tab:red", "vanishing stability")]:
         if _a is not None:
             _ax.axvline(_a, color=_c, ls="--", label=f"{_l} {_a:.1f} deg")
-    _ax.set_xlabel("Heel angle (deg)")
-    _ax.set_ylabel("GZ (m)")
+    _ax.set_xlabel(r"Heel angle $\phi$ (deg)")
+    _ax.set_ylabel(r"$GZ$ (m)")
     _ax.set_title("GZ curve with stability limits")
     _ax.legend()
     _ax.grid(alpha=0.3)
@@ -1264,8 +1264,8 @@ def _(
     _ax.plot([up["clp_x"]], [up["clp_z"]], "r+", ms=11, mew=2, label="CLP")
     _ax.plot([hs["cb"][0]], [hs["cb"][2]], "go", ms=6, label="CB")
     _ax.plot([lcg_in.value], [kg_in.value], "mx", ms=8, mew=2, label="CG")
-    _ax.set_xlabel("x from stern (m)")
-    _ax.set_ylabel("z above keel tip (m)")
+    _ax.set_xlabel(r"$x$ from stern (m)")
+    _ax.set_ylabel(r"$z$ above keel tip (m)")
     _ax.set_ylim(0, _wl + min(airdraft_in.value, 1.5))
     _ax.set_aspect("equal")
     _ax.legend(loc="upper left", fontsize=8, ncol=3)
@@ -1796,7 +1796,7 @@ def _(KNOT, arf_in, rho_in, up, v_req):
     _axs[0].set_ylabel("Fin side force (N)")
     _axs[1].set_ylabel("Induced drag (N)")
     for _ax in _axs:
-        _ax.set_xlabel("Leeway (deg)")
+        _ax.set_xlabel(r"Leeway $\lambda$ (deg)")
         _ax.grid(alpha=0.3)
         _ax.legend()
     mo.vstack([mo.ui.table(_rows, selection=None, pagination=False), _fig])
@@ -1940,14 +1940,14 @@ def _(
         ("CD at zero lift", f"{np.interp(0, sec['alpha'], sec['CD']):.4f}", ""),
     ]
     _fig, _axs = plt.subplots(1, 3, figsize=(11, 3.3))
-    for _s, _kw in ((sec_ref, dict(color="gray", ls="--", label="Re = 3e6")),
-                    (sec, dict(color="C0", label=f"Re = {re_sail:.2g}"))):
+    for _s, _kw in ((sec_ref, dict(color="gray", ls="--", label=r"$Re = 3 \times 10^6$")),
+                    (sec, dict(color="C0", label=rf"$Re = {re_sail:.2g}$"))):
         _axs[0].plot(_s["alpha"], _s["CL"], **_kw)
         _axs[1].plot(_s["CD"], _s["CL"], **_kw)
         _axs[2].plot(_s["alpha"], _s["CM"], **_kw)
-    _axs[0].set(xlabel="Angle of attack (deg)", ylabel="Section CL", xlim=(-30, 30))
-    _axs[1].set(xlabel="Section CD", ylabel="Section CL", xlim=(0, 0.25))
-    _axs[2].set(xlabel="Angle of attack (deg)", ylabel="Section CM about c/4", xlim=(-30, 30))
+    _axs[0].set(xlabel=r"Angle of attack $\alpha$ (deg)", ylabel=r"Section $C_L$", xlim=(-30, 30))
+    _axs[1].set(xlabel=r"Section $C_D$", ylabel=r"Section $C_L$", xlim=(0, 0.25))
+    _axs[2].set(xlabel=r"Angle of attack $\alpha$ (deg)", ylabel=r"Section $C_M$ about $c/4$", xlim=(-30, 30))
     for _ax in _axs:
         _ax.grid(alpha=0.3)
     _axs[0].legend()
@@ -2024,10 +2024,10 @@ def _(re_sail, sail, sail_arf_in, sail_taper_in, sail_tc_in, section_polar):
     _axs[1].plot(_s["alpha"], _s["CD"], "gray", ls="--", label="section")
     _axs[2].plot(sp["CD"], sp["CL"])
     _axs[3].plot(sp["alpha"], sp["CL"] / sp["CD"])
-    _axs[0].set(xlabel="Angle of attack (deg)", ylabel="CL", xlim=(-30, 30))
-    _axs[1].set(xlabel="Angle of attack (deg)", ylabel="CD", xlim=(-30, 30), ylim=(0, 0.6))
-    _axs[2].set(xlabel="CD", ylabel="CL", xlim=(0, 0.6))
-    _axs[3].set(xlabel="Angle of attack (deg)", ylabel="CL / CD", xlim=(-30, 30))
+    _axs[0].set(xlabel=r"Angle of attack $\alpha$ (deg)", ylabel=r"$C_L$", xlim=(-30, 30))
+    _axs[1].set(xlabel=r"Angle of attack $\alpha$ (deg)", ylabel=r"$C_D$", xlim=(-30, 30), ylim=(0, 0.6))
+    _axs[2].set(xlabel=r"$C_D$", ylabel=r"$C_L$", xlim=(0, 0.6))
+    _axs[3].set(xlabel=r"Angle of attack $\alpha$ (deg)", ylabel=r"$C_L / C_D$", xlim=(-30, 30))
     for _ax in _axs:
         _ax.grid(alpha=0.3)
     _axs[0].legend()
@@ -2100,11 +2100,11 @@ def _(
     _fig, _axs = plt.subplots(1, 2, figsize=(9, 3.3))
     _axs[0].plot(_a, _x_cp)
     _axs[0].axhline(sail_mast_in.value, color="k", ls="--", lw=1, label="mast axis")
-    _axs[0].set(xlabel="Angle of attack (deg)", ylabel="Centre of pressure, x / c", xlim=(0, 30), ylim=(0, 0.6))
+    _axs[0].set(xlabel=r"Angle of attack $\alpha$ (deg)", ylabel=r"Centre of pressure, $x_{cp} / c$", xlim=(0, 30), ylim=(0, 0.6))
     _axs[0].legend()
     _axs[1].plot(_a, _t_des, label=f"design wind {vdes_in.value:.0f} kn")
     _axs[1].plot(_a, _t_surv, label=f"survival wind {vsurv_in.value:.0f} kn")
-    _axs[1].set(xlabel="Angle of attack (deg)", ylabel="Mast torque (N m)", xlim=(-30, 30))
+    _axs[1].set(xlabel=r"Angle of attack $\alpha$ (deg)", ylabel="Mast torque (N m)", xlim=(-30, 30))
     _axs[1].legend()
     for _ax in _axs:
         _ax.grid(alpha=0.3)
@@ -2391,13 +2391,13 @@ def _(
     for _name, _rs in sail_runs.items():
         _ax2.plot(_twas, [r["heel"] for r in _rs], label=_name)
     _ax2.axhline(maxheel_in.value, color="r", ls="--", lw=1, label="max heel")
-    _ax2.set(xlabel="True wind angle (deg)", ylabel="Heel (deg)")
+    _ax2.set(xlabel=r"True wind angle $\mathrm{TWA}$ (deg)", ylabel=r"Heel $\phi$ (deg)")
     _ax2.legend(fontsize=8)
     _ax3 = _fig.add_subplot(1, 3, 3)
     for _name, _rs in sail_runs.items():
         _ax3.plot(_twas, [r["lead"] for r in _rs], label=_name)
     _ax3.axhspan(-_lim, _lim, color="g", alpha=0.15, label="allowed lead")
-    _ax3.set(xlabel="True wind angle (deg)", ylabel="CE ahead of CLP (m)")
+    _ax3.set(xlabel=r"True wind angle $\mathrm{TWA}$ (deg)", ylabel="CE ahead of CLP (m)")
     _ax3.legend(fontsize=8)
     for _a in (_ax2, _ax3):
         _a.grid(alpha=0.3)
@@ -2565,12 +2565,12 @@ def _(
 
     _fig, _axs = plt.subplots(1, 2, figsize=(10, 3.4))
     for _ar, _row in sweep.items():
-        _axs[0].plot(_areas, [r["V"] for r in _row], "o-", label=f"AR {_ar}")
-        _axs[1].plot(_areas, [r["heel"] for r in _row], "o-", label=f"AR {_ar}")
+        _axs[0].plot(_areas, [r["V"] for r in _row], "o-", label=rf"$AR = {_ar}$")
+        _axs[1].plot(_areas, [r["heel"] for r in _row], "o-", label=rf"$AR = {_ar}$")
     _axs[0].axhline(v_req, color="k", ls=":", label="required")
     _axs[1].axhline(maxheel_in.value, color="r", ls="--", label="max heel")
-    _axs[0].set(xlabel="Sail area (m^2)", ylabel="Speed (kn)")
-    _axs[1].set(xlabel="Sail area (m^2)", ylabel="Heel (deg)")
+    _axs[0].set(xlabel=r"Sail area ($\mathrm{m^2}$)", ylabel="Speed (kn)")
+    _axs[1].set(xlabel=r"Sail area ($\mathrm{m^2}$)", ylabel=r"Heel $\phi$ (deg)")
     for _ax in _axs:
         _ax.grid(alpha=0.3)
         _ax.legend(fontsize=8)
@@ -2768,9 +2768,9 @@ def _(
         _axs[0].plot(span_z, _s["w"], label=_name)
         _axs[1].plot(span_z, _s["moment"], label=_name)
         _axs[2].plot(span_z, _s["t"] * 1e3, label=_name)
-    _axs[0].set(xlabel="Height above the root (m)", ylabel="Load per span (N/m)")
-    _axs[1].set(xlabel="Height above the root (m)", ylabel="Bending moment (N m)")
-    _axs[2].set(xlabel="Height above the root (m)", ylabel="Mast wall thickness (mm)")
+    _axs[0].set(xlabel=r"Height above the root $z$ (m)", ylabel=r"Load per span $w$ (N/m)")
+    _axs[1].set(xlabel=r"Height above the root $z$ (m)", ylabel=r"Bending moment $M$ (N m)")
+    _axs[2].set(xlabel=r"Height above the root $z$ (m)", ylabel="Mast wall thickness (mm)")
     for _ax in _axs:
         _ax.grid(alpha=0.3)
     _axs[0].legend()
