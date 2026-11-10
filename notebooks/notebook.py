@@ -343,7 +343,6 @@ def inputs_drift(
         ]),
         kind="warn",
     ) if _rows else mo.callout("All widgets are at their defaults.", kind="success")
-
     return
 
 
@@ -415,7 +414,7 @@ def _():
 def _():
     mo.md(r"""
     ### Hull Import
-    Imports the 3D CAD model of the complete underwater body (hull, keel and rudder in one STL) for analysis. The STL is exported bow toward -x, so the importer flips it by default to put the bow at +x; keel and rudder are told apart by planform area, not position. After import the model is placed in the notebook frame (x forward, y to port, z up, metres), with x = 0 at the stern, y = 0 on the centerline and **z = 0 at the keel tip**. Every height in the notebook (waterline height, KG, VCB) is measured up from that point, not from the bottom of the hull shell.
+    Imports the 3D CAD model of the complete underwater body (hull, keel and rudder in one STL) for analysis. The STL is exported bow toward -x, so the importer flips it by default to put the bow at +x; keel and rudder are told apart by planform area, not position. After import the model is placed in the notebook frame ($x$ forward, $y$ to port, $z$ up, metres), with $x = 0$ at the stern, $y = 0$ on the centerline and **$z = 0$ at the keel tip**. Every height in the notebook (waterline height, KG, VCB) is measured up from that point, not from the bottom of the hull shell.
     """)
     return
 
@@ -755,7 +754,7 @@ def _():
     ### Wetted Surface and Lateral Plane
     Splits the submerged body into **hull shell**, **keel** and **rudder**, using the same cut height as `hull_shell` (`hull_body_z`): everything below it is a fin, and the keel and rudder are told apart because they are separate pieces there. Wetted area is the mesh area of each piece below the waterline. The lateral plane is the underwater profile projected onto the centreline (x-z) plane, with its centroid (CLP) and each fin's planform. These are taken upright at the draft set above, so heel and trim are ignored.
 
-    Chord is the x extent of a horizontal section and thickness its y extent. `t/c` is the maximum over the span, and root and tip chords are read at 90% and 10% of the fin span. Aspect ratio is span^2 / planform area (geometric, with no end-plate correction).
+    Chord is the x extent of a horizontal section and thickness its y extent. $t/c$ is the maximum over the span, and root and tip chords are read at 90% and 10% of the fin span. Aspect ratio is $AR = \text{span}^2 / \text{planform area}$ (geometric, with no end-plate correction).
     """)
     return
 
@@ -941,7 +940,7 @@ def _(air_front, air_side, draft):
 def _():
     mo.md(r"""
     ### Form Coefficients
-    Longitudinal form of the **hull shell** below the waterline (keel and rudder excluded, as for Cb and Cwp). The midship section coefficient is `Cm = Am / (BWL x T)` with `Am` the largest submerged transverse section area, and the prismatic coefficient is `Cp = V / (Am x LWL) = Cb / Cm`. LCB is given as a percentage of LWL measured forward (+) or aft (-) of the middle of the waterline length. The half-angle of entrance is the angle of the waterline to the centreline, measured between 5% and 15% of LWL aft of the bow. The first few percent of the bow are left out because the waterline rounds off there.
+    Longitudinal form of the **hull shell** below the waterline (keel and rudder excluded, as for $C_b$ and $C_{wp}$). The midship section coefficient is $C_m = A_m / (B_{WL}\, T)$ with $A_m$ the largest submerged transverse section area, and the prismatic coefficient is $C_p = V / (A_m L_{WL}) = C_b / C_m$. LCB is given as a percentage of $L_{WL}$ measured forward (+) or aft (-) of the middle of the waterline length. The half-angle of entrance is the angle of the waterline to the centreline, measured between 5% and 15% of $L_{WL}$ aft of the bow. The first few percent of the bow are left out because the waterline rounds off there.
     """)
     return
 
@@ -1093,7 +1092,7 @@ def _(gz_heel, gz_val):
 def _():
     mo.md(r"""
     ### Stability Limits
-    Angles that bound the useful range of the GZ curve above. The hull is a closed lens with no gunwale (its widest point, z of about 0.65 m, is almost at the waterline), so there is no deck-edge immersion angle to read off. Instead, enter the **downflooding point**: the lowest opening that lets water in (a hatch or vent), as its half-breadth `|y|` from the centerline and its height `z` above the keel tip in the hull frame. It is taken on the leeward side, and its height above the waterline is `z cos(heel) - |y| sin(heel)` compared with the solved waterline height at each heel. The usable range ends at the first of downflooding or vanishing stability. Righting moment is `GZ x displacement x g`.
+    Angles that bound the useful range of the GZ curve above. The hull is a closed lens with no gunwale (its widest point, $z \approx 0.65$ m, is almost at the waterline), so there is no deck-edge immersion angle to read off. Instead, enter the **downflooding point**: the lowest opening that lets water in (a hatch or vent), as its half-breadth $|y|$ from the centerline and its height $z$ above the keel tip in the hull frame. It is taken on the leeward side, and its height above the waterline is $z\cos\phi - |y|\sin\phi$, with $\phi$ the heel angle, compared with the solved waterline height at each heel. The usable range ends at the first of downflooding or vanishing stability. Righting moment is $M_R = m\, g\, GZ$ for hull mass $m$.
     """)
     return
 
@@ -1169,7 +1168,7 @@ def _(avs_angle, df_angle, gz_heel, gz_val):
 def _():
     mo.md(r"""
     ### Metacentric Heights
-    Initial stability and trim response at the solved draft, with the heel and trim set above, for the centre of gravity set in the GZ section (`KG`). `KMt = KB + BMt` and `KML = KB + BML` come from the waterplane inertias, and `GM = KM - KG`. `MCT1cm = displacement x GML / (100 x LWL)` is the moment needed to change trim by 1 cm over the waterline length. The displacement here equals the hull mass, because the draft is solved from it.
+    Initial stability and trim response at the solved draft, with the heel and trim set above, for the centre of gravity set in the GZ section ($KG$). $KM_T = KB + BM_T$ and $KM_L = KB + BM_L$ come from the waterplane inertias, and $GM = KM - KG$. $MCT_{1\,\mathrm{cm}} = \Delta\, GM_L / (100\, L_{WL})$ is the moment needed to change trim by 1 cm over the waterline length. The displacement here equals the hull mass, because the draft is solved from it.
     """)
     return
 
@@ -1207,7 +1206,7 @@ def _(gz_heel, gz_val, hs, kg_in):
 def _():
     mo.md(r"""
     ### Mast Step and Sail-Plan Datum
-    Fixes where the rig attaches to the hull and the frame the sail design will work in. The **sail datum** is the mast step: a point on the centerline (or offset by `y`) at the hull's top surface at the chosen `x`, plus an optional height offset for a mast foot or step plate. Sail geometry is then given relative to it, as `p_hull = mast_step + p_sail`, with the same axes as the hull (x forward, y to port, z up, metres). Heights above the waterline use the draft set in the hydrostatics section.
+    Fixes where the rig attaches to the hull and the frame the sail design will work in. The **sail datum** is the mast step: a point on the centerline (or offset by $y$) at the hull's top surface at the chosen $x$, plus an optional height offset for a mast foot or step plate. Sail geometry is then given relative to it, as $\mathbf{p}_\text{hull} = \mathbf{p}_\text{step} + \mathbf{p}_\text{sail}$, with the same axes as the hull ($x$ forward, $y$ to port, $z$ up, metres). Heights above the waterline use the draft set in the hydrostatics section.
 
     The air-draft limit is the greatest allowed height of the top of the rig above the waterline, from any bridge, lock or handling limit. The default is a placeholder, so replace it with the real figure. The lead is the longitudinal distance from the centre of lateral resistance to the mast step, positive when the mast is ahead of it. The sail's centre of effort will normally sit a little ahead of the CLP.
     """)
@@ -1302,7 +1301,7 @@ def _():
     The conditions the rig must work in, the crossing it must achieve, and the limits it must respect. Every value here is a **placeholder** to be replaced once the real mission and weight budget exist.
 
     ### Wind and Air
-    True wind is given at a reference height as a power-law profile, `V(z) = V_ref (z / z_ref)^alpha`, with `alpha` about 0.11 over open sea. Three wind states bound the design: a **minimum** at which the boat should still make way, a **design** wind that sets the sail area and balance, and a **survival** wind for the structural check. Air density follows the ideal gas law from temperature and pressure, and dynamic pressure is `q = rho V^2 / 2`.
+    True wind is given at a reference height as a power-law profile, $V(z) = V_\text{ref}\,(z / z_\text{ref})^{\alpha}$, with $\alpha \approx 0.11$ over open sea. Three wind states bound the design: a **minimum** at which the boat should still make way, a **design** wind that sets the sail area and balance, and a **survival** wind for the structural check. Air density follows the ideal gas law from temperature and pressure, and dynamic pressure is $q = \rho V^2 / 2$.
     """)
     return
 
@@ -1378,7 +1377,7 @@ def _(
     _ax.grid(alpha=0.3)
     _ax.legend()
     mo.vstack([
-        mo.md(f"Air density: **{rho_air:.4f} kg/m^3**"),
+        mo.md(rf"Air density: $\rho_\text{{air}} = {rho_air:.4f}\ \mathrm{{kg/m^3}}$"),
         mo.ui.table(_rows, selection=None, pagination=False),
         _fig,
     ])
@@ -1389,7 +1388,7 @@ def _(
 def _():
     mo.md(r"""
     ### Crossing Target and Design Limits
-    The required average speed follows from the distance and the time allowed. The limits below are the acceptance criteria for later sections: the steady heel at the design wind must stay under `max heel`, which itself must sit inside the usable stability range; the sail's centre of effort must stay within `max lead` of the centre of lateral resistance (as a fraction of LWL) to hold helm in check; and the rig must fit under the air-draft limit with a mass no greater than `max rig mass`.
+    The required average speed follows from the distance and the time allowed. The limits below are the acceptance criteria for later sections: the steady heel at the design wind must stay under `max heel`, which itself must sit inside the usable stability range; the sail's centre of effort must stay within `max lead` of the centre of lateral resistance (as a fraction of $L_{WL}$) to hold helm in check; and the rig must fit under the air-draft limit with a mass no greater than `max rig mass`.
     """)
     return
 
@@ -1456,11 +1455,11 @@ def _():
     The water-side forces the sail has to balance: resistance against speed, and the side force the keel and rudder can produce as the boat makes leeway. Both are built from the underwater geometry already measured above, and both are written as functions (`calm_resistance`, `appendage_side_force`) so the force-balance section can call them at any speed and leeway.
 
     ### Calm-Water Resistance
-    Resistance is split into components that add at each speed `V`, with Froude number `Fn = V / sqrt(g LWL)`.
+    Resistance is split into components that add at each speed $V$, with Froude number $Fn = V / \sqrt{g L_{WL}}$.
 
-    - **Hull friction:** the ITTC-1957 line `Cf = 0.075 / (log10 Re - 2)^2` with `Re = V L / nu`, plus a roughness allowance `dCf`, acting on the wetted area of the hull shell.
-    - **Hull form factor:** `1 + k` from the Holtrop-Mennen regression (no transom term), which raises the friction to account for the hull's pressure drag due to viscosity. It is an estimate for a conventional displacement hull, so check its value.
-    - **Appendages:** the keel and rudder are flat-plate friction at their own chord Reynolds number, times a section thickness factor `1 + 2 t/c + 60 (t/c)^4`.
+    - **Hull friction:** the ITTC-1957 line $C_f = 0.075 / (\log_{10} Re - 2)^2$ with $Re = V L / \nu$, plus a roughness allowance $\Delta C_f$, acting on the wetted area of the hull shell.
+    - **Hull form factor:** $1 + k$ from the Holtrop-Mennen regression (no transom term), which raises the friction to account for the hull's pressure drag due to viscosity. It is an estimate for a conventional displacement hull, so check its value.
+    - **Appendages:** the keel and rudder are flat-plate friction at their own chord Reynolds number, times a section thickness factor $1 + 2\,t/c + 60\,(t/c)^4$.
 
     - **Wave-making:** Michell's thin-ship integral over the hull offsets, in the next subsection.
 
@@ -1536,10 +1535,10 @@ def _(KNOT, constants, dcf_in, form, hs, nu_in, rho_in, up, v_req, vmax_in):
     _ax.legend(loc="upper left")
     mo.vstack([
         mo.md(
-            f"Hull form factor **1 + k = {hull_form_factor:.3f}**, "
-            f"hull shell wetted area **{up['shell_wetted']:.3f} m^2**, "
-            f"appendage wetted area **{sum(f['wetted'] for f in up['fins']):.3f} m^2**. "
-            f"At the required {v_req:.2f} kn: Fn = {_vr / np.sqrt(G * form['lwl']):.3f}, "
+            rf"Hull form factor $1 + k = {hull_form_factor:.3f}$, "
+            rf"hull shell wetted area **{up['shell_wetted']:.3f}** $\mathrm{{m^2}}$, "
+            rf"appendage wetted area **{sum(f['wetted'] for f in up['fins']):.3f}** $\mathrm{{m^2}}$. "
+            rf"At the required {v_req:.2f} kn: $Fn = {_vr / np.sqrt(G * form['lwl']):.3f}$, "
             f"viscous resistance **{float(_hr + _fr):.2f} N** (wave-making excluded)."
         ),
         mo.ui.table(_rows, selection=None, pagination=False),
@@ -1552,13 +1551,13 @@ def _(KNOT, constants, dcf_in, form, hs, nu_in, rho_in, up, v_req, vmax_in):
 def _():
     mo.md(r"""
     ### Wave-Making Resistance (Michell)
-    Michell's thin-ship integral gives the wave resistance of a slender body from its offsets alone. With half-breadth `b(x, z)` (the full underwater body, so the keel and rudder are included), `k0 = g / V^2` and `lambda = sec(theta)` the angle of each wave component,
+    Michell's thin-ship integral gives the wave resistance of a slender body from its offsets alone. With half-breadth $b(x, z)$ (the full underwater body, so the keel and rudder are included), $k_0 = g / V^2$ and $\lambda = \sec\theta$ the angle of each wave component,
 
-    `R_w = (4 rho k0^2 V^2 / pi) * integral from 1 to inf of (I^2 + J^2) lambda^2 / sqrt(lambda^2 - 1) d lambda`, with `I + iJ = integral of (db/dx) exp(k0 lambda^2 z + i k0 lambda x) dx dz`
+    $$R_w = \frac{4 \rho k_0^2 V^2}{\pi} \int_1^\infty \frac{(I^2 + J^2)\,\lambda^2}{\sqrt{\lambda^2 - 1}}\, d\lambda, \qquad I + iJ = \iint \frac{\partial b}{\partial x}\, e^{k_0 \lambda^2 z + i k_0 \lambda x}\, dx\, dz$$
 
-    taken over the body below the waterline (`z <= 0`). Substituting `lambda = cosh u` removes the singularity at `lambda = 1`. The offsets are sampled on a grid, treated as piecewise linear, and the exponential weights are integrated exactly over each cell, so the result does not depend on how fine the vertical grid is relative to the wave decay depth.
+    taken over the body below the waterline ($z \le 0$). Substituting $\lambda = \cosh u$ removes the singularity at $\lambda = 1$. The offsets are sampled on a grid, treated as piecewise linear, and the exponential weights are integrated exactly over each cell, so the result does not depend on how fine the vertical grid is relative to the wave decay depth.
 
-    The implementation was checked on a Wigley hull, where it converges with grid and integration limits and shows the known humps and hollows near `Fn` = 0.3, 0.35 and 0.5. **It is still thin-ship theory.** It assumes small hull slopes, ignores viscosity, sinkage and trim, and is known to overpredict the humps and miss the hollows between them for real hulls. It also assumes the hull is upright at the solved draft.
+    The implementation was checked on a Wigley hull, where it converges with grid and integration limits and shows the known humps and hollows near $Fn = 0.3$, $0.35$ and $0.5$. **It is still thin-ship theory.** It assumes small hull slopes, ignores viscosity, sinkage and trim, and is known to overpredict the humps and miss the hollows between them for real hulls. It also assumes the hull is upright at the solved draft.
 
     **The transom needs a decision.** Taken literally, the blunt stern is a vertical wall that the theory sees as a strong wave maker, even at speeds where the real transom is dry. The **transom fairing length** therefore extends the stern aft as a linear taper to zero beam, standing in for the hollow a dry transom leaves in the wake. The result is sensitive to it, so the plot shades the range from no fairing to a 0.45 m fairing. Use the result for the trend with speed rather than for exact values.
     """)
@@ -1595,7 +1594,7 @@ def _(Polygon, draft, form, hs, hull, reduce, shapely):
     mich_x, mich_z, mich_b = michell_offsets(hull, draft)
     _slope = np.abs(np.gradient(mich_b, mich_x, axis=0)).max()
     mo.md(
-        f"Offset grid: {len(mich_x)} stations by {len(mich_z)} levels. Largest hull slope |db/dx| = **{_slope:.2f}** "
+        rf"Offset grid: {len(mich_x)} stations by {len(mich_z)} levels. Largest hull slope $|\partial b/\partial x| = {_slope:.2f}$ "
         f"(thin-ship theory wants this well under 1; the blunt transom face is what makes it large), beam / length = {hs['wp']['bwl'] / form['lwl']:.2f}."
     )
     return mich_b, mich_x, mich_z
@@ -1729,7 +1728,7 @@ def _(
     mo.vstack([
         mo.md(
             f"At the required {v_req:.2f} kn: viscous **{_hr + _fr:.2f} N**, wave-making **{_wr:.2f} N**, "
-            f"total **{R_req:.2f} N** (`R_req`). Wave-making ranges from {_wr_long:.1f} N (0.45 m fairing) "
+            rf"total **{R_req:.2f} N** ($R_\text{{req}}$). Wave-making ranges from {_wr_long:.1f} N (0.45 m fairing) "
             f"to {_wr_raw:.1f} N (unfaired transom) depending on how the stern is treated."
         ),
         mo.ui.table(_rows, selection=None, pagination=False),
@@ -1742,11 +1741,11 @@ def _(
 def _():
     mo.md(r"""
     ### Keel and Rudder Side Force
-    With the boat making leeway angle `lambda`, the keel and rudder (rudder fixed at zero deflection) work as lifting surfaces. Their lift slope comes from Helmbold's low-aspect-ratio formula,
+    With the boat making leeway angle $\lambda$, the keel and rudder (rudder fixed at zero deflection) work as lifting surfaces. Their lift slope comes from Helmbold's low-aspect-ratio formula,
 
-    `CL_alpha = 2 pi AR_e / (2 + sqrt(4 + AR_e^2))` per radian, with `CL = CL_alpha lambda` and induced drag `CDi = CL^2 / (pi AR_e)`,
+    $C_{L_\alpha} = \dfrac{2\pi\, AR_e}{2 + \sqrt{4 + AR_e^2}}$ per radian, with $C_L = C_{L_\alpha}\lambda$ and induced drag $C_{D_i} = C_L^2 / (\pi\, AR_e)$,
 
-    where `AR_e` is the geometric aspect ratio times an **end-plate factor**. The hull and free surface act as an end plate that raises the effective aspect ratio towards twice the geometric value, so 1.0 is the conservative end and 2.0 the optimistic one. The hull's own side force is ignored, and the fins are taken as unstalled (keep leeway under about 10 degrees).
+    where $AR_e$ is the geometric aspect ratio times an **end-plate factor**. The hull and free surface act as an end plate that raises the effective aspect ratio towards twice the geometric value, so 1.0 is the conservative end and 2.0 the optimistic one. The hull's own side force is ignored, and the fins are taken as unstalled (keep leeway under about 10 degrees).
     """)
     return
 
@@ -1811,7 +1810,7 @@ def _():
     The sail is one rigid, symmetric wing (NACA 00xx) turned about its mast by a motor, so there is no sheet trim and no camber, and the angle of attack is set directly. Lift and drag are built in three steps: the planform from area, aspect ratio and taper; two-dimensional section data from NeuralFoil at the sail's Reynolds number; and finite-span corrections for lift slope and induced drag. A last step finds the centre of effort and the torque the mast motor must hold.
 
     ### Planform
-    The span is `b = sqrt(AR S)`, the root chord `c_r = 2 S / (b (1 + lambda))` and the tip chord `lambda c_r`, where `lambda` is the taper ratio. The mean aerodynamic chord (MAC) and its distance from the root follow from the trapezoid formulas. The root sits on the mast step. The **end-plate factor** multiplies the aspect ratio in the lift and drag calculations only: a sail close to the deck behaves as if it were longer, up to a factor of 2 for a perfect end plate, and 1 means no benefit assumed.
+    The span is $b = \sqrt{AR\, S}$, the root chord $c_r = 2 S / \big(b (1 + \lambda)\big)$ and the tip chord $\lambda c_r$, where $\lambda$ is the taper ratio. The mean aerodynamic chord (MAC) and its distance from the root follow from the trapezoid formulas. The root sits on the mast step. The **end-plate factor** multiplies the aspect ratio in the lift and drag calculations only: a sail close to the deck behaves as if it were longer, up to a factor of 2 for a perfect end plate, and 1 means no benefit assumed.
     """)
     return
 
@@ -1884,7 +1883,7 @@ def _(
 def _():
     mo.md(r"""
     ### Section Data
-    Section lift, drag and moment come from NeuralFoil (a neural surrogate for XFOIL) run on the exact NACA 00xx outline, so the thickness ratio above is a live input. The Reynolds number is set by the **design wind** at the height of the mean chord, with the wind taken as the apparent wind for now: `Re = V c_MAC / nu`, and air viscosity from Sutherland's law. The grey curves are the same section at `Re = 3e6`, the usual wind-tunnel reference condition for tabulated NACA data, so the two can be compared. The **analysis confidence** NeuralFoil reports drops where it is extrapolating, which at this low Reynolds number happens past stall.
+    Section lift, drag and moment come from NeuralFoil (a neural surrogate for XFOIL) run on the exact NACA 00xx outline, so the thickness ratio above is a live input. The Reynolds number is set by the **design wind** at the height of the mean chord, with the wind taken as the apparent wind for now: $Re = V c_\text{MAC} / \nu$, and air viscosity from Sutherland's law. The grey curves are the same section at $Re = 3 \times 10^6$, the usual wind-tunnel reference condition for tabulated NACA data, so the two can be compared. The **analysis confidence** NeuralFoil reports drops where it is extrapolating, which at this low Reynolds number happens past stall.
     """)
     return
 
@@ -1957,7 +1956,7 @@ def _(
         mo.ui.table([{"Property": a, "Value": b, "Note": c} for a, b, c in _rows], selection=None, pagination=False),
         _fig,
         mo.md(f"NeuralFoil confidence is below 0.8 for {len(_low)} of {len(sec['alpha'])} angles"
-              + (f" (|alpha| from {np.abs(_low).min():.1f} deg)." if len(_low) else ".")),
+              + (rf" ($|\alpha|$ from {np.abs(_low).min():.1f}$^\circ$)." if len(_low) else ".")),
     ])
     return nu_air, re_sail, sail_z, section_polar, v_sail
 
@@ -1966,11 +1965,11 @@ def _(
 def _():
     mo.md(r"""
     ### Finite-Span Corrections
-    The sail's aspect ratio is low, so the section data cannot be used directly. Three corrections turn the section polar into a sail polar, all using the effective aspect ratio `AR_eff`.
+    The sail's aspect ratio is low, so the section data cannot be used directly. Three corrections turn the section polar into a sail polar, all using the effective aspect ratio $AR_\text{eff}$.
 
-    - **Lift slope:** Helmbold's formula, `a = pi AR_eff / (1 + sqrt(1 + (pi AR_eff / a0)^2))`, with `a0` the section lift slope from NeuralFoil. It stays accurate at low aspect ratio, where lifting-line theory over-predicts the slope.
-    - **Downwash:** the angle of attack is reduced by an induced angle proportional to the lift, `alpha_eff = alpha - kappa CL` with `kappa = 1/a - 1/a0`. Reading the section polar at `alpha_eff` keeps the section's stall shape while the linear slope is exactly Helmbold's.
-    - **Induced drag:** `CD = cd(alpha_eff) + CL^2 / (pi AR_eff e)`. The span efficiency `e` comes from a Glauert lifting-line solution for the taper ratio.
+    - **Lift slope:** Helmbold's formula, $a = \dfrac{\pi\, AR_\text{eff}}{1 + \sqrt{1 + (\pi\, AR_\text{eff} / a_0)^2}}$, with $a_0$ the section lift slope from NeuralFoil. It stays accurate at low aspect ratio, where lifting-line theory over-predicts the slope.
+    - **Downwash:** the angle of attack is reduced by an induced angle proportional to the lift, $\alpha_\text{eff} = \alpha - \kappa C_L$ with $\kappa = 1/a - 1/a_0$. Reading the section polar at $\alpha_\text{eff}$ keeps the section's stall shape while the linear slope is exactly Helmbold's.
+    - **Induced drag:** $C_D = c_d(\alpha_\text{eff}) + C_L^2 / (\pi\, AR_\text{eff}\, e)$. The span efficiency $e$ comes from a Glauert lifting-line solution for the taper ratio.
 
     Low aspect ratio wings stall later and softer than the section does because of tip-vortex lift, which this model does not capture, so the stall region is conservative.
     """)
@@ -2041,9 +2040,9 @@ def _(re_sail, sail, sail_arf_in, sail_taper_in, sail_tc_in, section_polar):
 def _():
     mo.md(r"""
     ### Centre of Effort and Mast Torque
-    The sail turns about its mast, so the mast torque sets the motor size. For a symmetric section the lift acts at the quarter chord at small angles and the centre of pressure moves aft as the moment grows, `x_cp / c = 0.25 - CM / CN`, with `CM` the section moment about the quarter chord at the effective angle and `CN = CL cos(alpha) + CD sin(alpha)` the chord-normal force coefficient. The moment about a mast at chord fraction `x_m` is `CM_mast = CM + CN (x_m - 0.25)`, and the torque is `CM_mast q S c_MAC`. A mast at the quarter chord leaves only the small section moment; a mast ahead of it makes the sail try to feather, and one behind it makes it try to weathercock. Which of the two is the safe failure if the motor lets go is a design choice.
+    The sail turns about its mast, so the mast torque sets the motor size. For a symmetric section the lift acts at the quarter chord at small angles and the centre of pressure moves aft as the moment grows, $x_{cp} / c = 0.25 - C_M / C_N$, with $C_M$ the section moment about the quarter chord at the effective angle and $C_N = C_L \cos\alpha + C_D \sin\alpha$ the chord-normal force coefficient. The moment about a mast at chord fraction $x_m$ is $C_{M,\text{mast}} = C_M + C_N (x_m - 0.25)$, and the torque is $C_{M,\text{mast}}\, q\, S\, c_\text{MAC}$. A mast at the quarter chord leaves only the small section moment; a mast ahead of it makes the sail try to feather, and one behind it makes it try to weathercock. Which of the two is the safe failure if the motor lets go is a design choice.
 
-    Spanwise, the lift is assumed elliptical, which puts its centroid at `4 b / (3 pi)` above the root (the deck acts as the symmetry plane). That height, against the centre of lateral resistance, is the heeling arm used in the force balance. The fore-and-aft lead needs the sail angle to the boat, so it waits for that section.
+    Spanwise, the lift is assumed elliptical, which puts its centroid at $4 b / (3 \pi)$ above the root (the deck acts as the symmetry plane). That height, against the centre of lateral resistance, is the heeling arm used in the force balance. The fore-and-aft lead needs the sail angle to the boat, so it waits for that section.
     """)
     return
 
@@ -2117,16 +2116,16 @@ def _(
 def _():
     mo.md(r"""
     ## Force Balance and Heel
-    The sail force is balanced against the hydrodynamic force over the points of sail. The wind is true wind `V_tw` at true wind angle `TWA` from the bow, taken at the height of the sail's lift centroid. For a boat speed `V` the apparent wind has components `V_tw cos(TWA) + V` along the boat and `V_tw sin(TWA)` across it, giving the apparent wind speed `AWS` and angle `AWA`. The sail is turned to an **angle of attack** `alpha` to the apparent wind, which the motor sets directly, so `alpha` is the control variable. With `L = q S CL` and `D = q S CD` at `q = rho_air AWS^2 / 2`,
+    The sail force is balanced against the hydrodynamic force over the points of sail. The wind is true wind $V_{tw}$ at true wind angle $\mathrm{TWA}$ from the bow, taken at the height of the sail's lift centroid. For a boat speed $V$ the apparent wind has components $V_{tw}\cos\mathrm{TWA} + V$ along the boat and $V_{tw}\sin\mathrm{TWA}$ across it, giving the apparent wind speed $\mathrm{AWS}$ and angle $\mathrm{AWA}$. The sail is turned to an **angle of attack** $\alpha$ to the apparent wind, which the motor sets directly, so $\alpha$ is the control variable. With $L = q S C_L$ and $D = q S C_D$ at $q = \rho_\text{air}\,\mathrm{AWS}^2 / 2$,
 
-    - **Drive:** `F_x = L sin(AWA) - D cos(AWA)` along the boat, and **side force** `F_y = L cos(AWA) + D sin(AWA)` across it.
-    - **Heel:** the heeling moment `F_y h cos(phi)`, with `h` the height of the lift centroid above the centre of lateral resistance, is set equal to the righting moment `m g GZ(phi)` from the GZ curve, up to its peak. The sail force is not reduced for heel, other than the `cos(phi)` on the moment and on the horizontal components.
-    - **Leeway:** the keel and rudder carry the side force `F_y cos(phi)`, which fixes the leeway angle, capped at 12 degrees. Their induced drag adds to the resistance.
-    - **Speed:** `V` is the speed at which `F_x cos(phi)` equals the calm-water resistance (viscous plus Michell wave-making, tabulated once on a speed grid) plus the induced drag.
+    - **Drive:** $F_x = L \sin\mathrm{AWA} - D \cos\mathrm{AWA}$ along the boat, and **side force** $F_y = L \cos\mathrm{AWA} + D \sin\mathrm{AWA}$ across it.
+    - **Heel:** the heeling moment $F_y\, h \cos\phi$, with $h$ the height of the lift centroid above the centre of lateral resistance, is set equal to the righting moment $m\, g\, GZ(\phi)$ from the GZ curve, up to its peak. The sail force is not reduced for heel, other than the $\cos\phi$ on the moment and on the horizontal components.
+    - **Leeway:** the keel and rudder carry the side force $F_y \cos\phi$, which fixes the leeway angle, capped at 12 degrees. Their induced drag adds to the resistance.
+    - **Speed:** $V$ is the speed at which $F_x \cos\phi$ equals the calm-water resistance (viscous plus Michell wave-making, tabulated once on a speed grid) plus the induced drag.
 
-    For each `TWA` the angle of attack is chosen to give the highest speed with the steady heel at or under the **max heel** limit; if even the smallest tried angle exceeds it, the sail is feathered to the least heel. The sail polar is NeuralFoil data up to 30 degrees and a Viterna-Corrigan post-stall extension to 90 degrees beyond that (see Sail Sizing), so the sail can be trimmed square to the wind on a run, where it works by drag.
+    For each $\mathrm{TWA}$ the angle of attack is chosen to give the highest speed with the steady heel at or under the **max heel** limit; if even the smallest tried angle exceeds it, the sail is feathered to the least heel. The sail polar is NeuralFoil data up to 30 degrees and a Viterna-Corrigan post-stall extension to 90 degrees beyond that (see Sail Sizing), so the sail can be trimmed square to the wind on a run, where it works by drag.
 
-    **Helm** comes from the fore-and-aft position of the sail's centre of effort. The centre of pressure sits at `x_cp` chord fractions from the leading edge (from the section moment, as before), the mast at `x_m`, and the chord makes an angle `AWA - alpha` with the boat's axis, so the centre of effort is `(x_cp - x_m) c_MAC cos(AWA - alpha)` aft of the mast. The **lead** is its distance ahead of the centre of lateral resistance. The rudder force needed to cancel the yaw moment `F_y cos(phi) lead` acts at the rudder's centre, and its angle follows from the rudder's lift slope. Both are checked against the `max lead` limit.
+    **Helm** comes from the fore-and-aft position of the sail's centre of effort. The centre of pressure sits at $x_{cp}$ chord fractions from the leading edge (from the section moment, as before), the mast at $x_m$, and the chord makes an angle $\mathrm{AWA} - \alpha$ with the boat's axis, so the centre of effort is $(x_{cp} - x_m)\, c_\text{MAC} \cos(\mathrm{AWA} - \alpha)$ aft of the mast. The **lead** is its distance ahead of the centre of lateral resistance. The rudder force needed to cancel the yaw moment $F_y \cos\phi \cdot \text{lead}$ acts at the rudder's centre, and its angle follows from the rudder's lift slope. Both are checked against the `max lead` limit.
 
     Leeway is not fed back into the apparent wind, and there is no sea state, wave added resistance, trim, sinkage or rudder drag. The smaller fin is taken as the rudder and the larger as the keel.
     """)
@@ -2496,7 +2495,7 @@ def _(
         dheel=max(abs(r["heel"] - o["heel"]) for r, o in zip(_d, _off)),
     )
     mo.md(
-        f"**Hull windage.** The hull above the waterline has {hull_wind['Af']:.3f} m^2 frontal and {hull_wind['As']:.3f} m^2 side area "
+        rf"**Hull windage.** The hull above the waterline has {hull_wind['Af']:.3f} $\mathrm{{m^2}}$ frontal and {hull_wind['As']:.3f} $\mathrm{{m^2}}$ side area "
         f"(drag coefficients {hull_cdf_in.value:.2f} and {hull_cds_in.value:.2f}), and is in the balance above. Against a run with it switched off, "
         f"at the design wind it changes the boat speed by at most {hull_wind_effect['dv']:.2f} kn ({hull_wind_effect['dv_rel']:.1%}) "
         f"and the heel by at most {hull_wind_effect['dheel']:.1f} deg. Its larger effect is the survival case, in the structural loads section."
@@ -2508,7 +2507,7 @@ def _(
 def _():
     mo.md(r"""
     ### Sail Sizing
-    The force balance is repeated for other sail areas and aspect ratios, keeping the section, taper, mast axis and hull. Each sail gets its own planform, Reynolds number and finite-span polar. Spar and rig mass are not recomputed here, so check any promising sail against the structural section below. Past 30 degrees the sail polar continues with the Viterna-Corrigan post-stall model, matched to the NeuralFoil data at 30 degrees, with a flat-plate limit `CD_max = 1.11 + 0.018 AR`. It is an extrapolation, but it lets the sail be trimmed squarer to the wind on a reach or run instead of stopping at the end of the data.
+    The force balance is repeated for other sail areas and aspect ratios, keeping the section, taper, mast axis and hull. Each sail gets its own planform, Reynolds number and finite-span polar. Spar and rig mass are not recomputed here, so check any promising sail against the structural section below. Past 30 degrees the sail polar continues with the Viterna-Corrigan post-stall model, matched to the NeuralFoil data at 30 degrees, with a flat-plate limit $C_{D,\max} = 1.11 + 0.018\, AR$. It is an extrapolation, but it lets the sail be trimmed squarer to the wind on a reach or run instead of stopping at the end of the data.
     """)
     return
 
@@ -2584,7 +2583,7 @@ def _(
         mo.md(
             f"Best speed at TWA {sweep_twa_in.value:.0f} deg and the design wind, with the same section, taper, mast position and hull. "
             f"The rig must fit under {_rig_h:.2f} m above the step. "
-            + (f"The smallest sail that reaches {v_req:.2f} kn and fits is **{min(_fit, key=lambda r: r['area'])['area']:.2f} m^2** "
+            + (rf"The smallest sail that reaches {v_req:.2f} kn and fits is **{min(_fit, key=lambda r: r['area'])['area']:.2f}** $\mathrm{{m^2}}$ "
                f"at AR {min(_fit, key=lambda r: r['area'])['ar']}." if _fit
                else f"**No sail in this grid reaches {v_req:.2f} kn and fits under the air-draft limit.**")
         ),
@@ -2601,9 +2600,9 @@ def _():
     The rig is a cantilever from the mast step, so the wind loads set the bending moment and shear the mast and step must carry, and the mast size sets most of the rig mass. Two load cases bound the design.
 
     - **Design:** the design wind plus the required boat speed (a head-on apparent wind), with the sail at the angle of maximum lift.
-    - **Survival:** the survival wind with the sail locked beam-on at a normal-force coefficient `CN_lock`, which stands for a motor failure, or a sail left stalled in a squall. A flat plate at 90 degrees gives about 1.2, above anything the lifting sail reaches.
+    - **Survival:** the survival wind with the sail locked beam-on at a normal-force coefficient $C_{N,\text{lock}}$, which stands for a motor failure, or a sail left stalled in a squall. A flat plate at 90 degrees gives about 1.2, above anything the lifting sail reaches.
 
-    The load per unit span is `w(z) = q(z) CN c(z)`, with `q(z)` from the wind profile at the height of each section and `c(z)` the chord. Shear `S(z)` and bending moment `M(z)` follow by integrating from the tip down to the root. The mast is a thin-walled circular tube whose outside diameter is a fraction of the section thickness at the mast axis. Its wall comes from the bending stress, `sigma = M D / (2 I)` with `I = pi D^3 t / 8`, so `t = 4 M SF / (pi D^2 sigma_allow)`, with a minimum wall for handling. The tip deflection comes from integrating `M / (E I)` twice. The rig mass adds the mast, the skin (as an areal density over both surfaces) and a fixed allowance for the motor, bearing and step plate. The step reactions are the root shear and moment, and the survival case also gives the heeling moment on the hull, taken about the centre of lateral resistance and compared with the peak righting moment.
+    The load per unit span is $w(z) = q(z)\, C_N\, c(z)$, with $q(z)$ from the wind profile at the height of each section and $c(z)$ the chord. Shear $S(z)$ and bending moment $M(z)$ follow by integrating from the tip down to the root. The mast is a thin-walled circular tube whose outside diameter is a fraction of the section thickness at the mast axis. Its wall comes from the bending stress, $\sigma = M D / (2 I)$ with $I = \pi D^3 t / 8$, so $t = 4 M\, SF / (\pi D^2 \sigma_\text{allow})$, with a minimum wall for handling. The tip deflection comes from integrating $M / (E I)$ twice. The rig mass adds the mast, the skin (as an areal density over both surfaces) and a fixed allowance for the motor, bearing and step plate. The step reactions are the root shear and moment, and the survival case also gives the heeling moment on the hull, taken about the centre of lateral resistance and compared with the peak righting moment.
 
     All the material values are placeholders for a carbon tube.
     """)
@@ -2865,13 +2864,13 @@ def _(
 def _():
     mo.md(r"""
     ## Mast Drivetrain and Motor Sizing
-    A single motor turns the mast, and with it the sail, through a reduction gearbox: `T_motor = T_mast / (N eta)` for gear ratio `N` and drivetrain efficiency `eta`. The mast torque the drivetrain must supply is the sum of
+    A single motor turns the mast, and with it the sail, through a reduction gearbox: $T_\text{motor} = T_\text{mast} / (N \eta)$ for gear ratio $N$ and drivetrain efficiency $\eta$. The mast torque the drivetrain must supply is the sum of
 
     - **Aerodynamic torque**, the peak of the mast torque over the angle-of-attack range at the design wind (Centre of Effort and Mast Torque).
-    - **Friction**: a seal drag plus bearing friction, `mu r_b (2 M / L_b + V + W)`. The root bending moment `M` and shear `V` of the design case are reacted by a pair of bearings `L_b` apart, `W` is the rig weight and `r_b` the bearing radius, taken as the mast radius at the root.
-    - **Inertia** of the sail about the mast axis, treating the skin as a flat plate of mean chord `c` with its centroid at mid-chord: `I = m_skin c^2 (1/12 + (0.5 - x_m)^2)`. The spar sits on the axis and is ignored. The sail is taken to reach the slew rate `omega` in a time `t_a`, so the inertial torque is `I omega / t_a`.
+    - **Friction**: a seal drag plus bearing friction, $\mu\, r_b\, (2 M / L_b + V + W)$. The root bending moment $M$ and shear $V$ of the design case are reacted by a pair of bearings $L_b$ apart, $W$ is the rig weight and $r_b$ the bearing radius, taken as the mast radius at the root.
+    - **Inertia** of the sail about the mast axis, treating the skin as a flat plate of mean chord $c$ with its centroid at mid-chord: $I = m_\text{skin}\, c^2 \left(\tfrac{1}{12} + (0.5 - x_m)^2\right)$. The spar sits on the axis and is ignored. The sail is taken to reach the slew rate $\omega$ in a time $t_a$, so the inertial torque is $I \omega / t_a$.
 
-    A **torque safety factor** multiplies the sum. The **continuous** (holding) requirement leaves out the inertia, the **peak** includes it. The motor is checked against its continuous and peak torque and its speed `omega N`. The holding power in the windings is `(T_motor / K_m)^2` with `K_m` the motor constant, which is what the sail costs in electrical power just to stay trimmed.
+    A **torque safety factor** multiplies the sum. The **continuous** (holding) requirement leaves out the inertia, the **peak** includes it. The motor is checked against its continuous and peak torque and its speed $\omega N$. The holding power in the windings is $(T_\text{motor} / K_m)^2$ with $K_m$ the motor constant, which is what the sail costs in electrical power just to stay trimmed.
 
     The **survival** torque is the peak mast torque at the survival wind, with the safety factor. The motor is not expected to hold it, so it sets the gearbox output rating and the brake or self-locking requirement. The torque limits and sail response in a gust are not modelled, and the gearbox and motor are generic placeholders until real parts are chosen.
     """)
@@ -3091,7 +3090,7 @@ def _(
     _fails = [c["Criterion"] for c in _checks if c["Status"] == "FAIL"]
     _marg = [c["Criterion"] for c in _checks if c["Status"] == "MARGINAL"]
     mo.vstack([
-        mo.md(f"Sail **{sail['S']:.2f} m^2**, aspect ratio **{sail['ar']:.2f}**, NACA 00{sail_tc_in.value:.0f}, mast at {sail_mast_in.value:.0%} chord, hull mass {mass_in.value:.0f} kg, {total_mass:.1f} kg with the {rig_mass:.1f} kg rig."),
+        mo.md(rf"Sail **{sail['S']:.2f}** $\mathrm{{m^2}}$, aspect ratio **{sail['ar']:.2f}**, NACA 00{sail_tc_in.value:.0f}, mast at {sail_mast_in.value:.0%} chord, hull mass {mass_in.value:.0f} kg, {total_mass:.1f} kg with the {rig_mass:.1f} kg rig."),
         mo.ui.table(_checks, selection=None, pagination=False),
         mo.callout("Fails: " + "; ".join(_fails) + ".", kind="danger") if _fails
         else mo.callout("All criteria are met" + (f", with thin margins on: {'; '.join(_marg)}." if _marg else "."),
