@@ -40,6 +40,314 @@ def _():
 
 
 @app.cell(hide_code=True)
+def inputs_intro():
+    mo.md(r"""
+    ## Inputs
+
+    Every default value in the notebook is set in the five cells below, grouped by what kind of number it is. The widgets next to each calculation take their default from here, so a value changed in one of these cells survives a kernel restart and marks every dependent cell stale. A widget changed interactively only lasts for the session; the drift table at the end of this section lists which ones differ from the defaults.
+
+    - **Design decisions:** free choices we make and can change.
+    - **Requirements:** the acceptance criteria the design is checked against.
+    - **Estimates and placeholders:** quantities we do not know yet, to be replaced with a measurement, a datasheet or a real part.
+    - **Modelling assumptions:** environment, empirical coefficients and modelling choices.
+    - **Physical constants:** fixed values. These are not widgets.
+    """)
+    return
+
+
+@app.cell
+def inputs_param():
+    from dataclasses import dataclass as _dataclass
+    from types import SimpleNamespace as Group
+
+
+    @_dataclass(frozen=True)
+    class Param:
+        """One input: its default value, unit and a short note on where it comes from."""
+        value: object
+        unit: str = ""
+        note: str = ""
+
+
+    return Group, Param
+
+
+@app.cell
+def inputs_design(Group, Param):
+    design = Group(
+        sail_area=Param(0.75, "m²", "Sail planform area"),
+        sail_ar=Param(2.0, "", "Aspect ratio b²/S; the span must fit under the air-draft limit"),
+        sail_taper=Param(1.0, "", "Taper ratio, tip chord / root chord"),
+        sail_tc=Param(12, "%", "Section thickness, the xx in NACA 00xx"),
+        mast_axis=Param(0.24, "chord", "Mast axis, fraction of chord from the leading edge"),
+        step_x=Param(1.0, "m", "Mast step x from stern"),
+        step_y=Param(0.0, "m", "Mast step y, + port"),
+        step_dz=Param(0.0, "m", "Step height above hull top"),
+        twa_min=Param(40, "deg", "Closest true wind angle sailed"),
+        twa_step=Param(10, "deg", "True wind angle step for the points-of-sail sweep"),
+        sweep_twa=Param(120, "deg", "True wind angle used in the sail-sizing sweep"),
+        mast_dfrac=Param(0.8, "", "Mast OD as a fraction of section thickness"),
+        gear_ratio=Param(100, "", "Gearbox ratio N"),
+        bearing_span=Param(0.3, "m", "Spacing between the mast bearings"),
+        hull_file=Param('Hull Form.STL', "", "STL file in data/"),
+        hull_units=Param('mm', "", "STL units"),
+        hull_axes=Param('Z-up (as exported)', "", "STL export axes"),
+        hull_flip=Param(True, "", "Flip so the bow points to +x"),
+        hull_center=Param(True, "", "Recentre: x=0 at stern, y=0 on centerline, z=0 at keel tip"),
+    )
+    return (design,)
+
+
+@app.cell
+def inputs_requirements(Group, Param):
+    requirements = Group(
+        distance=Param(1000, "nm", "Crossing distance"),
+        days=Param(40, "d", "Time allowed"),
+        max_heel=Param(25, "deg", "Max steady heel"),
+        max_lead=Param(0.10, "LWL", "Max CE-CLP lead, fraction of LWL"),
+        max_rig=Param(25, "kg", "Max rig mass"),
+        air_draft=Param(5.0, "m", "Air-draft limit above the waterline (placeholder)"),
+        slew_rate=Param(10, "deg/s", "Required sail slew rate"),
+        slew_time=Param(1.0, "s", "Time allowed to reach the slew rate"),
+        sf_strength=Param(2.0, "", "Safety factor on strength"),
+        sf_torque=Param(2.0, "", "Safety factor on torque"),
+        margin_flag=Param(0.10, "", "Summary flags a margin below this as MARGINAL"),
+        defl_limit=Param(0.10, "span", "Max survival tip deflection, fraction of span"),
+    )
+    return (requirements,)
+
+
+@app.cell
+def inputs_estimates(Group, Param):
+    estimates = Group(
+        hull_mass=Param(30.0, "kg", "Hull mass without the rig (placeholder)"),
+        hull_kg=Param(0.125, "m", "Hull CG above the keel tip (placeholder)"),
+        hull_lcg=Param(0.94, "m", "Hull LCG from the stern (placeholder)"),
+        hull_tcg=Param(0.0, "m", "Hull TCG, + port (placeholder)"),
+        df_y=Param(0.0, "m", "Downflooding point |y|"),
+        df_z=Param(0.78, "m", "Downflooding point height above the keel tip"),
+        fixed_mass=Param(2.0, "kg", "Motor, bearing and step plate mass"),
+        skin_density=Param(0.8, "kg/m²", "Skin areal density"),
+        wall_min=Param(0.6, "mm", "Minimum tube wall"),
+        bearing_mu=Param(0.005, "", "Bearing friction coefficient"),
+        seal_drag=Param(0.5, "N·m", "Seal drag torque"),
+        sigma_ult=Param(500, "MPa", "Allowable stress, ultimate (carbon tube)"),
+        tube_e=Param(70, "GPa", "Tube modulus (carbon tube)"),
+        tube_rho=Param(1600, "kg/m³", "Tube density (carbon tube)"),
+        hull_cdf=Param(0.6, "", "Hull frontal windage drag coefficient (guess)"),
+        hull_cds=Param(1.0, "", "Hull side windage drag coefficient (guess)"),
+        drive_eff=Param(0.75, "", "Drivetrain efficiency (estimate)"),
+        motor_cont=Param(0.10, "N·m", "Motor continuous torque (generic placeholder)"),
+        motor_peak=Param(0.30, "N·m", "Motor peak torque (generic placeholder)"),
+        motor_rpm=Param(3000, "rpm", "Motor max speed (generic placeholder)"),
+        motor_km=Param(0.03, "N·m/√W", "Motor constant K_m (generic placeholder)"),
+        gearbox_rating=Param(30, "N·m", "Gearbox output torque rating (generic placeholder)"),
+    )
+    return (estimates,)
+
+
+@app.cell
+def inputs_assumptions(Group, Param):
+    assumptions = Group(
+        heel=Param(0.0, "deg", "Heel for single-point hydrostatics, + starboard down"),
+        trim=Param(0.0, "deg", "Trim for single-point hydrostatics, + bow down"),
+        heel_max=Param(90, "deg", "Max heel in the GZ sweep"),
+        heel_step=Param(5, "deg", "Heel step in the GZ sweep"),
+        air_temp=Param(15.0, "°C", "Air temperature"),
+        pressure=Param(1013, "hPa", "Air pressure"),
+        z_ref=Param(10.0, "m", "Wind reference height"),
+        shear_alpha=Param(0.11, "", "Wind shear exponent"),
+        v_min=Param(3.0, "kn", "Minimum wind"),
+        v_des=Param(12.0, "kn", "Design wind"),
+        v_surv=Param(45.0, "kn", "Survival wind"),
+        nu_water=Param(1.19e-6, "m²/s", "Water kinematic viscosity (1.19e-6 for sea water at 15 °C)"),
+        roughness=Param(0.0003, "", "Roughness allowance dCf"),
+        v_max_shown=Param(10.0, "kn", "Max speed shown in the resistance plots"),
+        transom_fairing=Param(0.2, "m", "Transom fairing length; strongly affects wave resistance"),
+        fin_arf=Param(1.3, "", "End-plate factor on fin aspect ratio"),
+        sail_arf=Param(1.0, "", "End-plate factor on sail aspect ratio"),
+        cn_lock=Param(1.2, "", "Locked-sail normal force coefficient"),
+        water=Param('Sea water (1025)', "", "Water density choice (dropdown key)"),
+        leeway_cap=Param(12.0, "deg", "Leeway cap in the force balance"),
+        viterna_a=Param(1.11, "", "Viterna post-stall CD_max = a + b·AR"),
+        viterna_b=Param(0.018, "", "Viterna post-stall CD_max = a + b·AR"),
+        alpha_polar=Param(30.0, "deg", "Sail polar is NeuralFoil data up to here, flat-plate extension beyond"),
+        shell_frac=Param(0.05, "", "hull_shell: fraction of height separating the shell from the fins"),
+    )
+    return (assumptions,)
+
+
+@app.cell
+def inputs_constants(Group, Param):
+    constants = Group(
+        g=Param(9.80665, "m/s²", "Gravity"),
+        knot=Param(0.514444, "m/s", "Metres per second per knot"),
+        r_air=Param(287.05, "J/(kg·K)", "Specific gas constant of dry air"),
+        mu_ref=Param(1.716e-5, "Pa·s", "Sutherland reference viscosity"),
+        t_zero=Param(273.15, "K", "0 °C in kelvin, also the Sutherland reference temperature"),
+        s_suth=Param(110.4, "K", "Sutherland constant"),
+    )
+    return (constants,)
+
+
+@app.cell
+def inputs_drift(
+    acc_t_in,
+    air_temp_in,
+    airdraft_in,
+    alpha_in,
+    arf_in,
+    assumptions,
+    bspan_in,
+    cn_lock_in,
+    days_in,
+    dcf_in,
+    design,
+    dfrac_in,
+    dfy_in,
+    dfz_in,
+    dist_in,
+    emod_in,
+    estimates,
+    eta_in,
+    fixed_in,
+    gbox_in,
+    gear_in,
+    heel_in,
+    heelmax_in,
+    heelstep_in,
+    hull_cdf_in,
+    hull_cds_in,
+    kg_in,
+    km_in,
+    lcg_in,
+    mass_in,
+    maxheel_in,
+    maxlead_in,
+    maxrig_in,
+    mcont_in,
+    mpeak_in,
+    mrpm_in,
+    mu_in,
+    nu_in,
+    pressure_in,
+    requirements,
+    rho_in,
+    rho_mat_in,
+    sail_ar_in,
+    sail_area_in,
+    sail_arf_in,
+    sail_mast_in,
+    sail_taper_in,
+    sail_tc_in,
+    seal_in,
+    sf_in,
+    sigma_in,
+    skin_in,
+    slew_in,
+    step_dz_in,
+    step_x_in,
+    step_y_in,
+    sweep_twa_in,
+    taper_in,
+    tcg_in,
+    tmin_in,
+    trim_in,
+    tsf_in,
+    twa_min_in,
+    twa_step_in,
+    vdes_in,
+    vmax_in,
+    vmin_in,
+    vsurv_in,
+    zref_in,
+):
+    _widgets = [
+        ("design", "sail_area", sail_area_in),
+        ("design", "sail_ar", sail_ar_in),
+        ("design", "sail_taper", sail_taper_in),
+        ("design", "sail_tc", sail_tc_in),
+        ("design", "mast_axis", sail_mast_in),
+        ("design", "step_x", step_x_in),
+        ("design", "step_y", step_y_in),
+        ("design", "step_dz", step_dz_in),
+        ("design", "twa_min", twa_min_in),
+        ("design", "twa_step", twa_step_in),
+        ("design", "sweep_twa", sweep_twa_in),
+        ("design", "mast_dfrac", dfrac_in),
+        ("design", "gear_ratio", gear_in),
+        ("design", "bearing_span", bspan_in),
+        ("requirements", "distance", dist_in),
+        ("requirements", "days", days_in),
+        ("requirements", "max_heel", maxheel_in),
+        ("requirements", "max_lead", maxlead_in),
+        ("requirements", "max_rig", maxrig_in),
+        ("requirements", "air_draft", airdraft_in),
+        ("requirements", "slew_rate", slew_in),
+        ("requirements", "slew_time", acc_t_in),
+        ("requirements", "sf_strength", sf_in),
+        ("requirements", "sf_torque", tsf_in),
+        ("estimates", "hull_mass", mass_in),
+        ("estimates", "hull_kg", kg_in),
+        ("estimates", "hull_lcg", lcg_in),
+        ("estimates", "hull_tcg", tcg_in),
+        ("estimates", "df_y", dfy_in),
+        ("estimates", "df_z", dfz_in),
+        ("estimates", "fixed_mass", fixed_in),
+        ("estimates", "skin_density", skin_in),
+        ("estimates", "wall_min", tmin_in),
+        ("estimates", "bearing_mu", mu_in),
+        ("estimates", "seal_drag", seal_in),
+        ("estimates", "sigma_ult", sigma_in),
+        ("estimates", "tube_e", emod_in),
+        ("estimates", "tube_rho", rho_mat_in),
+        ("estimates", "hull_cdf", hull_cdf_in),
+        ("estimates", "hull_cds", hull_cds_in),
+        ("estimates", "drive_eff", eta_in),
+        ("estimates", "motor_cont", mcont_in),
+        ("estimates", "motor_peak", mpeak_in),
+        ("estimates", "motor_rpm", mrpm_in),
+        ("estimates", "motor_km", km_in),
+        ("estimates", "gearbox_rating", gbox_in),
+        ("assumptions", "heel", heel_in),
+        ("assumptions", "trim", trim_in),
+        ("assumptions", "heel_max", heelmax_in),
+        ("assumptions", "heel_step", heelstep_in),
+        ("assumptions", "air_temp", air_temp_in),
+        ("assumptions", "pressure", pressure_in),
+        ("assumptions", "z_ref", zref_in),
+        ("assumptions", "shear_alpha", alpha_in),
+        ("assumptions", "v_min", vmin_in),
+        ("assumptions", "v_des", vdes_in),
+        ("assumptions", "v_surv", vsurv_in),
+        ("assumptions", "nu_water", nu_in),
+        ("assumptions", "roughness", dcf_in),
+        ("assumptions", "v_max_shown", vmax_in),
+        ("assumptions", "transom_fairing", taper_in),
+        ("assumptions", "fin_arf", arf_in),
+        ("assumptions", "sail_arf", sail_arf_in),
+        ("assumptions", "cn_lock", cn_lock_in),
+        ("assumptions", "water", rho_in),
+    ]
+    _groups = dict(design=design, requirements=requirements, estimates=estimates, assumptions=assumptions)
+    _rows = []
+    for _grp, _attr, _w in _widgets:
+        _p = getattr(_groups[_grp], _attr)
+        _cur = _w.selected_key if _attr == "water" else _w.value
+        if _cur != _p.value:
+            _rows.append({"Group": _grp, "Input": _attr, "Unit": _p.unit, "Default": _p.value, "Current": _cur})
+    mo.callout(
+        mo.vstack([
+            mo.md(f"**{len(_rows)} widget(s) differ from the defaults above.** They revert when the kernel restarts; copy any you want to keep into the input cells."),
+            mo.ui.table(_rows, selection=None, pagination=False),
+        ]),
+        kind="warn",
+    ) if _rows else mo.callout("All widgets are at their defaults.", kind="success")
+
+    return
+
+
+@app.cell(hide_code=True)
 def _():
     mo.md(r"""
     ## Geometry Imports
@@ -60,7 +368,7 @@ def _():
     ], dtype=float)  # proper rotation (+90 deg about x), no mirroring
 
 
-    def geometry_form(name, filename, center=True, flip=False):
+    def geometry_form(name, filename, center=True, flip=False, units="mm", axes="Z-up (as exported)"):
         """One UI element holding every import setting for an STL."""
         return mo.ui.dictionary({
             "file": mo.ui.file(filetypes=[".stl"], label=f"Upload {name} STL"),
@@ -68,9 +376,9 @@ def _():
                 value=str(mo.notebook_dir().parent / "data" / filename),
                 label="...or path to STL", full_width=True),
             "units": mo.ui.dropdown(
-                {"mm": 0.001, "cm": 0.01, "m": 1.0, "in": 0.0254}, value="mm", label="STL units"),
+                {"mm": 0.001, "cm": 0.01, "m": 1.0, "in": 0.0254}, value=units, label="STL units"),
             "axes": mo.ui.dropdown(
-                ["SolidWorks (Y-up)", "Z-up (as exported)"], value="Z-up (as exported)", label="Export axes"),
+                ["SolidWorks (Y-up)", "Z-up (as exported)"], value=axes, label="Export axes"),
             "flip": mo.ui.checkbox(value=flip, label="Flip bow/stern (rotate 180 deg about vertical)"),
             "center": mo.ui.checkbox(
                 value=center, label="Recenter: x=0 at stern, y=0 on centerline, z=0 at keel tip"),
@@ -113,8 +421,12 @@ def _():
 
 
 @app.cell
-def _(geometry_form):
-    hull_form = geometry_form("hull", "Hull Form.STL", flip=True)
+def _(design, geometry_form):
+    hull_form = geometry_form(
+        "hull", design.hull_file.value,
+        center=design.hull_center.value, flip=design.hull_flip.value,
+        units=design.hull_units.value, axes=design.hull_axes.value,
+    )
     hull_form
     return (hull_form,)
 
@@ -176,22 +488,22 @@ def _():
 
 
 @app.cell
-def _():
-    mass_in = mo.ui.number(start=1.0, stop=5000.0, step=0.5, value=80.0, label="Hull mass, without the rig (kg)")
-    kg_in = mo.ui.number(start=0.0, stop=2.0, step=0.005, value=0.15, label="Hull KG: CG above keel (m)")
-    lcg_in = mo.ui.number(start=0.0, stop=20.0, step=0.01, value=1.1, label="Hull LCG from stern (m)")
-    tcg_in = mo.ui.number(start=-1.0, stop=1.0, step=0.001, value=0.0, label="Hull TCG, + port (m)")
+def _(estimates):
+    mass_in = mo.ui.number(start=1.0, stop=5000.0, step=0.5, value=estimates.hull_mass.value, label="Hull mass, without the rig (kg)")
+    kg_in = mo.ui.number(start=0.0, stop=2.0, step=0.005, value=estimates.hull_kg.value, label="Hull KG: CG above keel (m)")
+    lcg_in = mo.ui.number(start=0.0, stop=20.0, step=0.01, value=estimates.hull_lcg.value, label="Hull LCG from stern (m)")
+    tcg_in = mo.ui.number(start=-1.0, stop=1.0, step=0.001, value=estimates.hull_tcg.value, label="Hull TCG, + port (m)")
     mo.hstack([mass_in, kg_in, lcg_in, tcg_in], justify="start")
     return kg_in, lcg_in, mass_in, tcg_in
 
 
 @app.cell
-def _():
-    heel_in = mo.ui.number(start=-90, stop=90, step=0.5, value=0.0, label="Heel (deg, + = starboard down)")
-    trim_in = mo.ui.number(start=-30, stop=30, step=0.1, value=0.0, label="Trim (deg, + = bow down)")
+def _(assumptions):
+    heel_in = mo.ui.number(start=-90, stop=90, step=0.5, value=assumptions.heel.value, label="Heel (deg, + = starboard down)")
+    trim_in = mo.ui.number(start=-30, stop=30, step=0.1, value=assumptions.trim.value, label="Trim (deg, + = bow down)")
     rho_in = mo.ui.dropdown(
         {"Sea water (1025)": 1025.0, "Fresh water (1000)": 1000.0},
-        value="Sea water (1025)",
+        value=assumptions.water.value,
         label="Water density",
     )
     mo.hstack([heel_in, trim_in, rho_in], justify="start")
@@ -256,7 +568,7 @@ def _(hull, mass_in, rho_in, solve_draft):
 
 
 @app.cell
-def _():
+def _(assumptions):
     from functools import reduce
 
     from shapely.geometry import MultiPolygon, Polygon
@@ -301,7 +613,7 @@ def _():
         )
 
 
-    def hull_shell(hull, frac=0.05, dz=0.005):
+    def hull_shell(hull, frac=assumptions.shell_frac.value, dz=0.005):
         """Hull without keel/rudder: `hull` cut off below the lowest height where the
         section area exceeds `frac` of its maximum (the keel and rudder are thin
         fins, the shell is the wide body above them). Returns (shell, z_bottom)."""
@@ -707,9 +1019,9 @@ def _():
 
 
 @app.cell
-def _():
-    heelmax_in = mo.ui.number(start=10, stop=180, step=5, value=90, label="Max heel (deg)")
-    heelstep_in = mo.ui.number(start=0.5, stop=10, step=0.5, value=5, label="Heel step (deg)")
+def _(assumptions):
+    heelmax_in = mo.ui.number(start=10, stop=180, step=5, value=assumptions.heel_max.value, label="Max heel (deg)")
+    heelstep_in = mo.ui.number(start=0.5, stop=10, step=0.5, value=assumptions.heel_step.value, label="Heel step (deg)")
     mo.hstack([heelmax_in, heelstep_in], justify="start")
     return heelmax_in, heelstep_in
 
@@ -787,9 +1099,9 @@ def _():
 
 
 @app.cell
-def _():
-    dfy_in = mo.ui.number(start=0.0, stop=0.3, step=0.005, value=0.0, label="Downflooding point |y| (m)")
-    dfz_in = mo.ui.number(start=0.0, stop=1.0, step=0.005, value=0.78, label="Downflooding point z above keel tip (m)")
+def _(estimates):
+    dfy_in = mo.ui.number(start=0.0, stop=0.3, step=0.005, value=estimates.df_y.value, label="Downflooding point |y| (m)")
+    dfz_in = mo.ui.number(start=0.0, stop=1.0, step=0.005, value=estimates.df_z.value, label="Downflooding point z above keel tip (m)")
     mo.hstack([dfy_in, dfz_in], justify="start")
     return dfy_in, dfz_in
 
@@ -903,11 +1215,11 @@ def _():
 
 
 @app.cell
-def _(hull):
-    step_x_in = mo.ui.number(start=0.0, stop=float(hull.bounds[1, 0]), step=0.01, value=1.0, label="Mast step x from stern (m)")
-    step_y_in = mo.ui.number(start=-0.3, stop=0.3, step=0.005, value=0.0, label="Mast step y, + port (m)")
-    step_dz_in = mo.ui.number(start=-0.2, stop=0.5, step=0.005, value=0.0, label="Step height above hull top (m)")
-    airdraft_in = mo.ui.number(start=0.5, stop=30.0, step=0.1, value=5.0, label="Air-draft limit above waterline (m)")
+def _(design, hull, requirements):
+    step_x_in = mo.ui.number(start=0.0, stop=float(hull.bounds[1, 0]), step=0.01, value=design.step_x.value, label="Mast step x from stern (m)")
+    step_y_in = mo.ui.number(start=-0.3, stop=0.3, step=0.005, value=design.step_y.value, label="Mast step y, + port (m)")
+    step_dz_in = mo.ui.number(start=-0.2, stop=0.5, step=0.005, value=design.step_dz.value, label="Step height above hull top (m)")
+    airdraft_in = mo.ui.number(start=0.5, stop=30.0, step=0.1, value=requirements.air_draft.value, label="Air-draft limit above waterline (m)")
     mo.hstack([step_x_in, step_y_in, step_dz_in, airdraft_in], justify="start")
     return airdraft_in, step_dz_in, step_x_in, step_y_in
 
@@ -996,19 +1308,14 @@ def _():
 
 
 @app.cell
-def _():
-    return
-
-
-@app.cell
-def _():
-    air_temp_in = mo.ui.number(start=-10, stop=40, step=0.5, value=15.0, label="Air temperature (deg C)")
-    pressure_in = mo.ui.number(start=950, stop=1050, step=1, value=1013, label="Pressure (hPa)")
-    zref_in = mo.ui.number(start=2.0, stop=20.0, step=0.5, value=10.0, label="Wind reference height z_ref (m)")
-    alpha_in = mo.ui.number(start=0.05, stop=0.3, step=0.01, value=0.11, label="Shear exponent alpha")
-    vmin_in = mo.ui.number(start=1, stop=30, step=0.5, value=6.0, label="Minimum wind (kn)")
-    vdes_in = mo.ui.number(start=1, stop=40, step=0.5, value=15.0, label="Design wind (kn)")
-    vsurv_in = mo.ui.number(start=10, stop=100, step=1, value=45.0, label="Survival wind (kn)")
+def _(assumptions):
+    air_temp_in = mo.ui.number(start=-10, stop=40, step=0.5, value=assumptions.air_temp.value, label="Air temperature (deg C)")
+    pressure_in = mo.ui.number(start=950, stop=1050, step=1, value=assumptions.pressure.value, label="Pressure (hPa)")
+    zref_in = mo.ui.number(start=2.0, stop=20.0, step=0.5, value=assumptions.z_ref.value, label="Wind reference height z_ref (m)")
+    alpha_in = mo.ui.number(start=0.05, stop=0.3, step=0.01, value=assumptions.shear_alpha.value, label="Shear exponent alpha")
+    vmin_in = mo.ui.number(start=1, stop=30, step=0.5, value=assumptions.v_min.value, label="Minimum wind (kn)")
+    vdes_in = mo.ui.number(start=1, stop=40, step=0.5, value=assumptions.v_des.value, label="Design wind (kn)")
+    vsurv_in = mo.ui.number(start=10, stop=100, step=1, value=assumptions.v_surv.value, label="Survival wind (kn)")
     mo.vstack([
         mo.hstack([air_temp_in, pressure_in, zref_in, alpha_in], justify="start"),
         mo.hstack([vmin_in, vdes_in, vsurv_in], justify="start"),
@@ -1029,13 +1336,14 @@ def _(
     air_temp_in,
     airdraft_in,
     alpha_in,
+    constants,
     pressure_in,
     vdes_in,
     vmin_in,
     vsurv_in,
     zref_in,
 ):
-    KNOT = 0.514444  # m/s per knot
+    KNOT = constants.knot.value  # m/s per knot
 
 
     def wind_at(z, v_ref, z_ref, alpha):
@@ -1043,7 +1351,7 @@ def _(
         return v_ref * (np.maximum(z, 0.1) / z_ref) ** alpha
 
 
-    rho_air = pressure_in.value * 100.0 / (287.05 * (air_temp_in.value + 273.15))
+    rho_air = pressure_in.value * 100.0 / (constants.r_air.value * (air_temp_in.value + constants.t_zero.value))
     wind_states = {
         "Minimum": vmin_in.value * KNOT,
         "Design": vdes_in.value * KNOT,
@@ -1087,12 +1395,12 @@ def _():
 
 
 @app.cell
-def _():
-    dist_in = mo.ui.number(start=100, stop=6000, step=50, value=3000, label="Crossing distance (nm)")
-    days_in = mo.ui.number(start=5, stop=120, step=1, value=40, label="Time allowed (days)")
-    maxheel_in = mo.ui.number(start=5, stop=60, step=1, value=25, label="Max steady heel (deg)")
-    maxlead_in = mo.ui.number(start=0.0, stop=0.3, step=0.005, value=0.10, label="Max CE-CLP lead (fraction of LWL)")
-    maxrig_in = mo.ui.number(start=0.0, stop=500, step=1, value=25, label="Max rig mass (kg)")
+def _(requirements):
+    dist_in = mo.ui.number(start=100, stop=6000, step=50, value=requirements.distance.value, label="Crossing distance (nm)")
+    days_in = mo.ui.number(start=5, stop=120, step=1, value=requirements.days.value, label="Time allowed (days)")
+    maxheel_in = mo.ui.number(start=5, stop=60, step=1, value=requirements.max_heel.value, label="Max steady heel (deg)")
+    maxlead_in = mo.ui.number(start=0.0, stop=0.3, step=0.005, value=requirements.max_lead.value, label="Max CE-CLP lead (fraction of LWL)")
+    maxrig_in = mo.ui.number(start=0.0, stop=500, step=1, value=requirements.max_rig.value, label="Max rig mass (kg)")
     mo.vstack([
         mo.hstack([dist_in, days_in], justify="start"),
         mo.hstack([maxheel_in, maxlead_in, maxrig_in], justify="start"),
@@ -1162,17 +1470,17 @@ def _():
 
 
 @app.cell
-def _():
-    nu_in = mo.ui.number(start=0.8e-6, stop=1.8e-6, step=0.01e-6, value=1.19e-6, label="Water kinematic viscosity (m^2/s; 1.19e-6 sea water at 15 deg C)")
-    dcf_in = mo.ui.number(start=0.0, stop=0.001, step=0.0001, value=0.0003, label="Roughness allowance dCf")
-    vmax_in = mo.ui.number(start=2, stop=15, step=0.5, value=6.0, label="Max speed shown (kn)")
+def _(assumptions):
+    nu_in = mo.ui.number(start=0.8e-6, stop=1.8e-6, step=0.01e-6, value=assumptions.nu_water.value, label="Water kinematic viscosity (m^2/s; 1.19e-6 sea water at 15 deg C)")
+    dcf_in = mo.ui.number(start=0.0, stop=0.001, step=0.0001, value=assumptions.roughness.value, label="Roughness allowance dCf")
+    vmax_in = mo.ui.number(start=2, stop=15, step=0.5, value=assumptions.v_max_shown.value, label="Max speed shown (kn)")
     mo.hstack([nu_in, dcf_in, vmax_in], justify="start")
     return dcf_in, nu_in, vmax_in
 
 
 @app.cell
-def _(KNOT, dcf_in, form, hs, nu_in, rho_in, up, v_req, vmax_in):
-    G = 9.80665
+def _(KNOT, constants, dcf_in, form, hs, nu_in, rho_in, up, v_req, vmax_in):
+    G = constants.g.value
 
 
     def cf_ittc(re):
@@ -1294,8 +1602,8 @@ def _(Polygon, draft, form, hs, hull, reduce, shapely):
 
 
 @app.cell
-def _():
-    taper_in = mo.ui.number(start=0.0, stop=1.0, step=0.05, value=0.2, label="Transom fairing length (m)")
+def _(assumptions):
+    taper_in = mo.ui.number(start=0.0, stop=1.0, step=0.05, value=assumptions.transom_fairing.value, label="Transom fairing length (m)")
     taper_in
     return (taper_in,)
 
@@ -1444,8 +1752,8 @@ def _():
 
 
 @app.cell
-def _():
-    arf_in = mo.ui.number(start=1.0, stop=2.0, step=0.05, value=1.3, label="End-plate factor on aspect ratio")
+def _(assumptions):
+    arf_in = mo.ui.number(start=1.0, stop=2.0, step=0.05, value=assumptions.fin_arf.value, label="End-plate factor on aspect ratio")
     arf_in
     return (arf_in,)
 
@@ -1509,12 +1817,12 @@ def _():
 
 
 @app.cell
-def _():
-    sail_tc_in = mo.ui.number(start=6, stop=24, step=1, value=12, label="Thickness ratio t/c (%, the xx in NACA 00xx)")
-    sail_area_in = mo.ui.number(start=0.1, stop=5.0, step=0.01, value=0.65, label="Sail area S (m^2)")
-    sail_ar_in = mo.ui.number(start=0.5, stop=6.0, step=0.05, value=1.75, label="Aspect ratio b^2 / S")
-    sail_taper_in = mo.ui.number(start=0.2, stop=1.0, step=0.05, value=1.0, label="Taper ratio (tip chord / root chord)")
-    sail_arf_in = mo.ui.number(start=1.0, stop=2.0, step=0.05, value=1.0, label="End-plate factor on aspect ratio")
+def _(assumptions, design):
+    sail_tc_in = mo.ui.number(start=6, stop=24, step=1, value=design.sail_tc.value, label="Thickness ratio t/c (%, the xx in NACA 00xx)")
+    sail_area_in = mo.ui.number(start=0.1, stop=5.0, step=0.01, value=design.sail_area.value, label="Sail area S (m^2)")
+    sail_ar_in = mo.ui.number(start=0.5, stop=6.0, step=0.05, value=design.sail_ar.value, label="Aspect ratio b^2 / S")
+    sail_taper_in = mo.ui.number(start=0.2, stop=1.0, step=0.05, value=design.sail_taper.value, label="Taper ratio (tip chord / root chord)")
+    sail_arf_in = mo.ui.number(start=1.0, stop=2.0, step=0.05, value=assumptions.sail_arf.value, label="End-plate factor on aspect ratio")
     mo.vstack([
         mo.hstack([sail_tc_in, sail_area_in], justify="start"),
         mo.hstack([sail_ar_in, sail_taper_in, sail_arf_in], justify="start"),
@@ -1586,6 +1894,7 @@ def _(
     KNOT,
     air_temp_in,
     alpha_in,
+    constants,
     draft,
     mast_step,
     rho_air,
@@ -1614,8 +1923,8 @@ def _(
         return {"alpha": np.asarray(alpha), **{k: np.asarray(r[k]) for k in ("CL", "CD", "CM", "analysis_confidence")}}
 
 
-    _T = air_temp_in.value + 273.15
-    nu_air = 1.716e-5 * (_T / 273.15) ** 1.5 * (273.15 + 110.4) / (_T + 110.4) / rho_air
+    _T = air_temp_in.value + constants.t_zero.value
+    nu_air = constants.mu_ref.value * (_T / constants.t_zero.value) ** 1.5 * (constants.t_zero.value + constants.s_suth.value) / (_T + constants.s_suth.value) / rho_air
     sail_z = mast_step[2] - draft + sail["z_mac"]  # height of the MAC above the waterline
     v_sail = float(wind_at(sail_z, vdes_in.value * KNOT, zref_in.value, alpha_in.value))
     re_sail = v_sail * sail["mac"] / nu_air
@@ -1740,8 +2049,8 @@ def _():
 
 
 @app.cell
-def _():
-    sail_mast_in = mo.ui.number(start=0.0, stop=0.6, step=0.01, value=0.25, label="Mast axis, as a fraction of chord from the leading edge")
+def _(design):
+    sail_mast_in = mo.ui.number(start=0.0, stop=0.6, step=0.01, value=design.mast_axis.value, label="Mast axis, as a fraction of chord from the leading edge")
     sail_mast_in
     return (sail_mast_in,)
 
@@ -1825,9 +2134,9 @@ def _():
 
 
 @app.cell
-def _():
-    twa_min_in = mo.ui.number(start=20, stop=90, step=5, value=40, label="Closest true wind angle sailed (deg)")
-    twa_step_in = mo.ui.number(start=5, stop=30, step=5, value=10, label="True wind angle step (deg)")
+def _(design):
+    twa_min_in = mo.ui.number(start=20, stop=90, step=5, value=design.twa_min.value, label="Closest true wind angle sailed (deg)")
+    twa_step_in = mo.ui.number(start=5, stop=30, step=5, value=design.twa_step.value, label="True wind angle step (deg)")
     mo.hstack([twa_min_in, twa_step_in], justify="start")
     return twa_min_in, twa_step_in
 
@@ -1836,6 +2145,7 @@ def _():
 def _(
     G,
     KNOT,
+    assumptions,
     dcf_in,
     draft,
     gz_heel,
@@ -1865,7 +2175,7 @@ def _(
     rm_heel, rm_val = gz_heel[: _pk + 1], gz_val[: _pk + 1] * mass_in.value * G
     rudder_arm = abs(rudder_f["clp_x"] - up["clp_x"])
     trim_alphas = np.r_[np.arange(0.0, 30.0, 1.0), np.arange(30.0, 90.1, 3.0)]
-    ALPHA_POLAR = 30.0  # the sail polar is NeuralFoil data up to here, a flat-plate extension beyond
+    ALPHA_POLAR = assumptions.alpha_polar.value  # the sail polar is NeuralFoil data up to here, a flat-plate extension beyond
 
 
     def extend_polar(sp_, sail_, cn_, ar_eff):
@@ -1875,7 +2185,7 @@ def _(
         xcp = np.where(cn_ > 0.1, 0.25 - cm / np.where(cn_ == 0, 1, cn_), 0.25)
         s = ALPHA_POLAR
         cls, cds = np.interp(s, sp_["alpha"], sp_["CL"]), np.interp(s, sp_["alpha"], sp_["CD"])
-        cdmax = 1.11 + 0.018 * ar_eff
+        cdmax = assumptions.viterna_a.value + assumptions.viterna_b.value * ar_eff
         rs = np.radians(s)
         a1, b1 = cdmax / 2, cdmax
         a2 = (cls - cdmax * np.sin(rs) * np.cos(rs)) * np.sin(rs) / np.cos(rs) ** 2
@@ -1926,9 +2236,9 @@ def _(
 
 
 @app.cell
-def _():
-    hull_cdf_in = mo.ui.number(start=0.0, stop=2.0, step=0.05, value=0.6, label="Hull frontal drag coefficient")
-    hull_cds_in = mo.ui.number(start=0.0, stop=2.0, step=0.05, value=1.0, label="Hull side drag coefficient")
+def _(estimates):
+    hull_cdf_in = mo.ui.number(start=0.0, stop=2.0, step=0.05, value=estimates.hull_cdf.value, label="Hull frontal drag coefficient")
+    hull_cds_in = mo.ui.number(start=0.0, stop=2.0, step=0.05, value=estimates.hull_cds.value, label="Hull side drag coefficient")
     mo.hstack([hull_cdf_in, hull_cds_in], justify="start")
     return hull_cdf_in, hull_cds_in
 
@@ -1940,6 +2250,7 @@ def _(
     alpha_in,
     appendage_side_force,
     arf_in,
+    assumptions,
     brentq,
     draft,
     heel_for,
@@ -1995,7 +2306,7 @@ def _(
             for _ in range(6):
                 phi, over = heel_for(M_heel * np.cos(np.radians(phi)))
             Y1 = float(appendage_side_force(V, 1.0, up["fins"], rho_in.value, arf_in.value)[0])
-            lee = min(Fy * np.cos(np.radians(phi)) / Y1, 12.0)
+            lee = min(Fy * np.cos(np.radians(phi)) / Y1, assumptions.leeway_cap.value)
             Di = float(appendage_side_force(V, lee, up["fins"], rho_in.value, arf_in.value)[1])
             net = Fx * np.cos(np.radians(phi)) - float(np.interp(V, res_v, R_tab)) - Di
             return net, dict(V=V, aws=aws, awa=np.degrees(awa), Fx=Fx, Fy=Fy, Fy_s=Fy_s, Fy_h=Fy_h, Fx_h=Fx_h,
@@ -2203,8 +2514,8 @@ def _():
 
 
 @app.cell
-def _():
-    sweep_twa_in = mo.ui.number(start=40, stop=180, step=5, value=120, label="True wind angle for the sizing sweep (deg)")
+def _(design):
+    sweep_twa_in = mo.ui.number(start=40, stop=180, step=5, value=design.sweep_twa.value, label="True wind angle for the sizing sweep (deg)")
     sweep_twa_in
     return (sweep_twa_in,)
 
@@ -2300,16 +2611,16 @@ def _():
 
 
 @app.cell
-def _():
-    cn_lock_in = mo.ui.number(start=0.5, stop=2.0, step=0.05, value=1.2, label="Locked-sail normal force CN_lock")
-    sf_in = mo.ui.number(start=1.0, stop=5.0, step=0.1, value=2.0, label="Safety factor on strength")
-    sigma_in = mo.ui.number(start=50, stop=1500, step=10, value=500, label="Allowable stress, ultimate (MPa)")
-    emod_in = mo.ui.number(start=10, stop=250, step=5, value=70, label="Tube modulus E (GPa)")
-    rho_mat_in = mo.ui.number(start=500, stop=8000, step=50, value=1600, label="Tube density (kg/m^3)")
-    dfrac_in = mo.ui.number(start=0.3, stop=1.0, step=0.05, value=0.8, label="Mast diameter / section thickness")
-    tmin_in = mo.ui.number(start=0.2, stop=3.0, step=0.1, value=0.6, label="Minimum wall (mm)")
-    skin_in = mo.ui.number(start=0.1, stop=3.0, step=0.05, value=0.8, label="Skin areal density (kg/m^2)")
-    fixed_in = mo.ui.number(start=0.0, stop=20.0, step=0.1, value=2.0, label="Motor, bearing, step plate (kg)")
+def _(assumptions, design, estimates, requirements):
+    cn_lock_in = mo.ui.number(start=0.5, stop=2.0, step=0.05, value=assumptions.cn_lock.value, label="Locked-sail normal force CN_lock")
+    sf_in = mo.ui.number(start=1.0, stop=5.0, step=0.1, value=requirements.sf_strength.value, label="Safety factor on strength")
+    sigma_in = mo.ui.number(start=50, stop=1500, step=10, value=estimates.sigma_ult.value, label="Allowable stress, ultimate (MPa)")
+    emod_in = mo.ui.number(start=10, stop=250, step=5, value=estimates.tube_e.value, label="Tube modulus E (GPa)")
+    rho_mat_in = mo.ui.number(start=500, stop=8000, step=50, value=estimates.tube_rho.value, label="Tube density (kg/m^3)")
+    dfrac_in = mo.ui.number(start=0.3, stop=1.0, step=0.05, value=design.mast_dfrac.value, label="Mast diameter / section thickness")
+    tmin_in = mo.ui.number(start=0.2, stop=3.0, step=0.1, value=estimates.wall_min.value, label="Minimum wall (mm)")
+    skin_in = mo.ui.number(start=0.1, stop=3.0, step=0.05, value=estimates.skin_density.value, label="Skin areal density (kg/m^2)")
+    fixed_in = mo.ui.number(start=0.0, stop=20.0, step=0.1, value=estimates.fixed_mass.value, label="Motor, bearing, step plate (kg)")
     mo.vstack([
         mo.hstack([cn_lock_in, sf_in, sigma_in, emod_in], justify="start"),
         mo.hstack([rho_mat_in, dfrac_in, tmin_in, skin_in, fixed_in], justify="start"),
@@ -2568,20 +2879,20 @@ def _():
 
 
 @app.cell
-def _():
-    gear_in = mo.ui.number(start=5, stop=1000, step=5, value=100, label="Gear ratio N")
-    eta_in = mo.ui.number(start=0.3, stop=0.98, step=0.01, value=0.75, label="Drivetrain efficiency")
-    slew_in = mo.ui.number(start=1, stop=60, step=1, value=10, label="Sail slew rate (deg/s)")
-    acc_t_in = mo.ui.number(start=0.2, stop=10, step=0.1, value=1.0, label="Time to reach slew rate (s)")
-    tsf_in = mo.ui.number(start=1.0, stop=4.0, step=0.1, value=2.0, label="Torque safety factor")
-    mu_in = mo.ui.number(start=0.001, stop=0.05, step=0.001, value=0.005, label="Bearing friction coefficient")
-    seal_in = mo.ui.number(start=0.0, stop=5.0, step=0.1, value=0.5, label="Seal drag (N m)")
-    bspan_in = mo.ui.number(start=0.1, stop=1.0, step=0.05, value=0.3, label="Bearing spacing L_b (m)")
-    mcont_in = mo.ui.number(start=0.01, stop=5.0, step=0.01, value=0.10, label="Motor continuous torque (N m)")
-    mpeak_in = mo.ui.number(start=0.01, stop=15.0, step=0.01, value=0.30, label="Motor peak torque (N m)")
-    mrpm_in = mo.ui.number(start=500, stop=10000, step=100, value=3000, label="Motor max speed (rpm)")
-    km_in = mo.ui.number(start=0.005, stop=0.2, step=0.005, value=0.03, label="Motor constant K_m (N m / sqrt(W))")
-    gbox_in = mo.ui.number(start=1, stop=200, step=1, value=30, label="Gearbox output torque rating (N m)")
+def _(design, estimates, requirements):
+    gear_in = mo.ui.number(start=5, stop=1000, step=5, value=design.gear_ratio.value, label="Gear ratio N")
+    eta_in = mo.ui.number(start=0.3, stop=0.98, step=0.01, value=estimates.drive_eff.value, label="Drivetrain efficiency")
+    slew_in = mo.ui.number(start=1, stop=60, step=1, value=requirements.slew_rate.value, label="Sail slew rate (deg/s)")
+    acc_t_in = mo.ui.number(start=0.2, stop=10, step=0.1, value=requirements.slew_time.value, label="Time to reach slew rate (s)")
+    tsf_in = mo.ui.number(start=1.0, stop=4.0, step=0.1, value=requirements.sf_torque.value, label="Torque safety factor")
+    mu_in = mo.ui.number(start=0.001, stop=0.05, step=0.001, value=estimates.bearing_mu.value, label="Bearing friction coefficient")
+    seal_in = mo.ui.number(start=0.0, stop=5.0, step=0.1, value=estimates.seal_drag.value, label="Seal drag (N m)")
+    bspan_in = mo.ui.number(start=0.1, stop=1.0, step=0.05, value=design.bearing_span.value, label="Bearing spacing L_b (m)")
+    mcont_in = mo.ui.number(start=0.01, stop=5.0, step=0.01, value=estimates.motor_cont.value, label="Motor continuous torque (N m)")
+    mpeak_in = mo.ui.number(start=0.01, stop=15.0, step=0.01, value=estimates.motor_peak.value, label="Motor peak torque (N m)")
+    mrpm_in = mo.ui.number(start=500, stop=10000, step=100, value=estimates.motor_rpm.value, label="Motor max speed (rpm)")
+    km_in = mo.ui.number(start=0.005, stop=0.2, step=0.005, value=estimates.motor_km.value, label="Motor constant K_m (N m / sqrt(W))")
+    gbox_in = mo.ui.number(start=1, stop=200, step=1, value=estimates.gearbox_rating.value, label="Gearbox output torque rating (N m)")
     mo.vstack([
         mo.hstack([gear_in, eta_in, slew_in, acc_t_in, tsf_in], justify="start"),
         mo.hstack([mu_in, seal_in, bspan_in, gbox_in], justify="start"),
@@ -2716,6 +3027,7 @@ def _(
     mcont_in,
     mpeak_in,
     mrpm_in,
+    requirements,
     rig_mass,
     rm_peak_all,
     sail,
@@ -2738,7 +3050,7 @@ def _(
 
 
     def _check(name, value, limit, ok, margin, unit="", band=None):
-        status = "FAIL" if not ok else ("MARGINAL" if margin < 0.10 else "PASS")
+        status = "FAIL" if not ok else ("MARGINAL" if margin < requirements.margin_flag.value else "PASS")
         return {"Criterion": name, "Result": f"{value:.2f}{unit}", "Limit": f"{limit:.2f}{unit}",
                 "Margin": f"{margin:+.0%}", "Status": status,
                 "Fairing 0 to 0.45 m": f"{band[0]:.2f} to {band[1]:.2f}" if band else ""}
@@ -2765,7 +3077,8 @@ def _(
         _check("Rig span above the step (m)", sail["b"], _rig_h, sail["b"] <= _rig_h, 1 - sail["b"] / _rig_h),
         _check("Survival heeling moment vs righting moment with rig (N m)", _surv_m, rm_peak_all, _surv_m < rm_peak_all, 1 - _surv_m / rm_peak_all),
         _check("Survival tip deflection (% of span)", 100 * struct["Survival"]["defl"][-1] / sail["b"], 10.0,
-               struct["Survival"]["defl"][-1] / sail["b"] < 0.10, 1 - 10 * struct["Survival"]["defl"][-1] / sail["b"]),
+               struct["Survival"]["defl"][-1] / sail["b"] < requirements.defl_limit.value,
+               1 - struct["Survival"]["defl"][-1] / sail["b"] / requirements.defl_limit.value),
         _check("Motor continuous torque (N m)", drive["motor_hold"], mcont_in.value,
                drive["motor_hold"] <= mcont_in.value, 1 - drive["motor_hold"] / mcont_in.value),
         _check("Motor peak torque (N m)", drive["motor_peak"], mpeak_in.value,

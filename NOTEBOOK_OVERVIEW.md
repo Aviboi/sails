@@ -4,6 +4,8 @@ The notebook runs in one chain. It imports a hull STL and computes hydrostatics 
 
 ## 1. Inputs
 
+Every default lives in the **Inputs** section near the top of the notebook, in five cells (`design`, `requirements`, `estimates`, `assumptions`, `constants`). Each entry is a `Param(value, unit, note)`. The widgets in the tables below (`*_in`) sit next to their calculations and take their default from those cells, so edit the default there to make it persist across kernel restarts; a value changed in a widget only lasts for the session. The drift table at the end of the Inputs section lists the widgets that currently differ from their defaults. The groups below are the same as the five cells, except that the file-import settings (`hull_file`, `hull_units`, `hull_axes`, `hull_flip`, `hull_center`) live in `design`, and the summary margin flag (10%) and the survival deflection limit (10% of span) live in `requirements`. Empirical modelling coefficients that used to be hard-coded (leeway cap, Viterna `CD_max` coefficients, polar switch angle, `hull_shell` fraction) are in `assumptions`, and fixed physical values (gravity, knot, gas constant, Sutherland constants) are in `constants`, not widgets.
+
 ### A. Geometry and file inputs
 | Input | Default | Notes |
 |---|---|---|
@@ -12,11 +14,11 @@ The notebook runs in one chain. It imports a hull STL and computes hydrostatics 
 ### B. Design decisions (free choices)
 | Input | Default | Used by |
 |---|---|---|
-| `sail_area_in` S | 0.65 m² | Sail planform, forces, structure, mass |
-| `sail_ar_in` | 1.75 | Planform, span (must fit under the air-draft limit) |
+| `sail_area_in` S | 0.75 m² | Sail planform, forces, structure, mass |
+| `sail_ar_in` | 2.0 | Planform, span (must fit under the air-draft limit) |
 | `sail_taper_in` | 1.0 | Planform, Glauert e |
 | `sail_tc_in` | 12 (NACA 0012) | Section polar, mast diameter, skin mass |
-| `sail_mast_in` | 0.25 chord | Mast torque, helm, mast tube size |
+| `sail_mast_in` | 0.24 chord | Mast torque, helm, mast tube size |
 | `step_x_in`, `step_y_in`, `step_dz_in` | 1.0 m, 0, 0 | Mast step position; sets sail height, lead and heeling arm |
 | `twa_min_in`, `twa_step_in` | 40°, 10° | Which points of sail are swept |
 | `sweep_twa_in` | 120° | TWA used in the sail-sizing sweep |
@@ -25,15 +27,15 @@ The notebook runs in one chain. It imports a hull STL and computes hydrostatics 
 | `bspan_in` | 0.3 m | Bearing spacing |
 | `mcont_in`, `mpeak_in`, `mrpm_in`, `km_in`, `gbox_in` | 0.10 / 0.30 N·m, 3000 rpm, 0.03, 30 N·m | Motor and gearbox ratings. These are generic placeholders until real parts are chosen. |
 | `dfrac_in` | 0.8 | Mast OD as a fraction of section thickness |
-| `maxheel_in`, `maxlead_in`, `maxrig_in`, `airdraft_in`, `dist_in`, `days_in` | 25°, 0.10 LWL, 25 kg, 5 m, 3000 nm, 40 d | These act as **requirements** (the acceptance criteria). The air-draft limit is a flagged placeholder. |
+| `maxheel_in`, `maxlead_in`, `maxrig_in`, `airdraft_in`, `dist_in`, `days_in` | 25°, 0.10 LWL, 25 kg, 5 m, 1000 nm, 40 d | These act as **requirements** (the acceptance criteria). The air-draft limit is a flagged placeholder. |
 | `taper_in` (transom fairing) | 0.2 m | A modelling choice that strongly affects wave resistance. The notebook plots the 0–0.45 m band. |
 
 ### C. Estimates or placeholders (weight and physical guesses)
 | Input | Default |
 |---|---|
-| `mass_in` (hull mass, no rig) | 80 kg |
-| `kg_in` | 0.15 m |
-| `lcg_in`, `tcg_in` | 1.1 m, 0 |
+| `mass_in` (hull mass, no rig) | 30 kg |
+| `kg_in` | 0.125 m |
+| `lcg_in`, `tcg_in` | 0.94 m, 0 |
 | `dfy_in`, `dfz_in` (downflooding point) | 0, 0.78 m |
 | `fixed_in` (motor, bearing and plate mass) | 2 kg |
 | `skin_in` | 0.8 kg/m² |
@@ -44,11 +46,11 @@ The notebook runs in one chain. It imports a hull STL and computes hydrostatics 
 | `tsf_in` (torque safety factor) | 2.0 |
 | `cn_lock_in` | 1.2 |
 | `hull_cdf_in`, `hull_cds_in` (hull windage drag, frontal and side) | 0.6, 1.0 (guesses) |
-| `vmin_in`, `vdes_in`, `vsurv_in` | 6 / 15 / 45 kn (environmental design assumptions) |
+| `vmin_in`, `vdes_in`, `vsurv_in` | 3 / 12 / 45 kn (environmental design assumptions) |
 
 ### D. Modelling assumptions and parameters
 These are physical or empirical coefficients that you can tune.
-- **Environment:** `air_temp_in` (15 °C), `pressure_in` (1013 hPa), `zref_in` (10 m), `alpha_in` (shear exponent 0.11), `rho_in` (sea water 1025), `nu_in` (1.19e-6), `dcf_in` (roughness 0.0003), `vmax_in` (display range).
+- **Environment:** `air_temp_in` (15 °C), `pressure_in` (1013 hPa), `zref_in` (10 m), `alpha_in` (shear exponent 0.11), `rho_in` (sea water 1025), `nu_in` (1.19e-6), `dcf_in` (roughness 0.0003), `vmax_in` (10 kn, display range and resistance-table grid).
 - **Waterline:** there is no draft input. `draft` is solved from `mass_in` and `rho_in` by `solve_draft`.
 - **Heel and trim:** `heel_in` and `trim_in` are single-point hydrostatics settings. `heelmax_in` and `heelstep_in` set the GZ sweep.
 - **End-plate factors:** `arf_in` (fins, 1.3) and `sail_arf_in` (sail, 1.0).
@@ -93,7 +95,7 @@ Grouped by area, with a flag for whether later cells use them and whether they a
 
 ### Environment
 - `rho_air`, `wind_states`, `wind_at`, `KNOT`: used almost everywhere. Critical.
-- `v_req`: the required speed (3000 nm / 40 d = 3.1 kn). It is the headline requirement.
+- `v_req`: the required speed (1000 nm / 40 d = 1.04 kn). It is the headline requirement.
 
 ### Hydrodynamics
 - `hull_form_factor`, `calm_resistance`, `mich_*`, `total_resistance`: Critical. `res_R` is the resistance curve for the speed solve.
@@ -142,7 +144,7 @@ There are 14 PASS / MARGINAL / FAIL checks. The three speed rows also show the 0
   - `hull_cdf_in`, `hull_cds_in` (hull windage drag).
   - The 12° leeway cap and the end-plate factors (`arf_in`, `sail_arf_in`).
   - The post-stall Viterna extension past 30° (sail runs at TWA > 90°).
-  - The minimum wind is only 6 kn.
+  - The minimum wind is only 3 kn.
   - The 5 m air-draft limit.
   - Elliptical lift loading, used for both the heeling arm and the structure.
 - **Not modelled** (the notebook says so): sea state and added resistance, rudder drag, trim and sinkage.

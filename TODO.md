@@ -4,12 +4,11 @@ Open work on `notebooks/notebook.py`, as of the force balance / structural loads
 
 ## P1: Design results to resolve
 
-The Design Summary section reported these against a 1.5 m^2 sail. The notebook default is now 0.65 m^2, so re-run and refresh the numbers below before acting on them.
+The Design Summary at the current defaults (0.75 m^2 sail, aspect ratio 2.0, 30 kg hull, 1000 nm in 40 days, 3 / 12 / 45 kn winds) has two failures. The other twelve checks pass.
 
-- **Survival knockdown margin is 2%.** The survival heeling moment (about 401 N m, sail locked beam-on) is close to the peak righting moment (about 409 N m). Check the locked-sail case, or add a feathering or reefing rule, and consider more ballast or a lower KG.
-- **Downwind speed fails.** The slowest speed from TWA 90 deg aft is about 2.6 kn against 3.1 kn required. The "TWA 90 deg and aft" row in the summary is my own criterion, so keep or drop it depending on the real route.
-- **Minimum-wind speed fails.** The best speed at the 6 kn minimum wind is about 1.5 kn. Decide whether that wind needs to meet the required speed, or loosen the placeholder.
-- **Best design-wind speed is marginal.** About 3.3 kn against 3.1 kn required, around 6% over.
+- **Survival heeling moment exceeds the righting moment.** About 187 N m against 155 N m with the rig (-21%). Check the locked-sail case, or add a feathering or reefing rule, and consider more ballast or a lower KG.
+- **Minimum-wind speed fails.** The best speed at the 3 kn minimum wind is about 0.6 kn against 1.04 kn required (0.49 to 0.61 kn across the fairing range). Decide whether that wind needs to meet the required speed, or loosen the placeholder.
+- **Everything else has wide margins.** Best design-wind speed is 2.6 kn, the slowest speed from TWA 90 deg aft is 2.2 kn, and the CE-CLP lead has the thinnest margin of the passes (+13%). The margins are large partly because the 1.04 kn required speed (1000 nm in 40 days) is much easier than the earlier 3000 nm crossing, so check the distance before relying on them.
 
 ## P2: Model correctness and consistency
 
@@ -26,11 +25,11 @@ Still open:
 
 - **Hull windage drag coefficients** (`hull_cdf_in`, `hull_cds_in`) are guesses.
 - **The all-up correction is not iterated.** If the rig mass becomes large, move the draft and righting moment into the structural loads.
-- **Fairing spread is large.** Best speed at the 6 kn minimum wind runs from about 0.8 kn (unfaired) to 1.8 kn (0.45 m), so the minimum-wind result depends mostly on the stern treatment.
+- **Fairing spread is large.** Best speed at the 3 kn minimum wind runs from about 0.49 kn (unfaired) to 0.61 kn (0.45 m), and at the design wind from 2.45 to 2.65 kn, so the stern treatment matters most at low wind.
 
 ## P3: Model fidelity (known simplifications)
 
-- **Post-stall polar is an extrapolation.** Beyond 30 deg the sail polar is a Viterna-Corrigan model matched to NeuralFoil at 30 deg. Compare against wind-tunnel or CFD data if the run and broad-reach results matter. The downwind failure above depends on it.
+- **Post-stall polar is an extrapolation.** Beyond 30 deg the sail polar is a Viterna-Corrigan model matched to NeuralFoil at 30 deg. Compare against wind-tunnel or CFD data if the run and broad-reach results matter. The slowest-speed row (TWA 90 deg aft) depends on it.
 - **Sail forces are not reduced for heel.** Beyond the `cos(phi)` terms, nothing accounts for it.
 - **Leeway is not fed back into the apparent wind.** Leeway is also capped at 12 deg.
 - **Sea state, wave added resistance, trim, sinkage and rudder drag are ignored.**
@@ -47,9 +46,9 @@ Still open:
 
 Replace these once the real mission and weight budget exist.
 
-- **Weights and CG:** `mass_in` (80 kg), `kg_in`, `lcg_in`, `tcg_in`, `fixed_in`.
+- **Weights and CG:** `mass_in` (30 kg), `kg_in`, `lcg_in`, `tcg_in`, `fixed_in`.
 - **Structure:** material strength, modulus, density, skin density, safety factor, `CN_lock`, minimum wall.
-- **Limits and environment:** the air-draft limit (5 m), the 6 / 15 / 45 kn wind states, the crossing distance and time.
+- **Limits and environment:** the air-draft limit (5 m), the 3 / 12 / 45 kn wind states, the crossing distance and time (1000 nm in 40 days; the earlier default was 3000 nm).
 - **Downflooding point:** `dfy_in`, `dfz_in` (0, 0.78 m) is a guess, and it sets the usable stability range that the heel limit is checked against.
 - **Drivetrain:** gear ratio, efficiency, bearing and seal friction, and the motor and gearbox ratings are generic until real parts are chosen.
 
