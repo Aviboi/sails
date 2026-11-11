@@ -1,4 +1,4 @@
-# Overview of `notebooks/notebook.py` (2933 lines)
+# Overview of `notebooks/notebook.py` (3712 lines)
 
 The notebook runs in one chain. It imports a hull STL and computes hydrostatics and stability. Then it designs a wing sail, balances sail force against hull force, sizes the structure and motor, and ends with a pass/fail summary.
 
@@ -69,6 +69,18 @@ These are physical or empirical coefficients that you can tune.
   - Deflection limit: 10% of span.
   - Alpha grids.
 
+### E. Design study inputs
+New `Param`s read directly from the groups (no widgets, so the drift table does not list them).
+
+| Input | Group | Default | Used by |
+|---|---|---|---|
+| `area_range`, `ar_range`, `step_x_range`, `gap_range` | design | (0.4, 2.0) m², (1.5, 4.0), (0.6, 1.6) m, (0.0, 0.3) m | Sweep ranges of the study |
+| `od_max`, `mast_len_max`, `area_max`, `mass_max` | requirements | 60 mm, 2.5 m, 3.0 m², 60 kg | Manufacturing and mass thresholds (all placeholders) |
+| `tube_stock` | assumptions | 16 (OD, ID) pairs, 20 to 60 mm | Stock carbon tube sizes (placeholder range, no supplier list yet) |
+| `cb_table_n` | assumptions | 6 | Masses in the buoyancy-centre table behind the fast righting moment |
+| `study_points_map`, `study_points_line` | assumptions | 12, 9 | Points per axis on a map, and per margin-line sweep |
+| `study_twa_step` | assumptions | 20° | True-wind-angle step inside each evaluation (10° is 2.5x slower, within about 1.5% of speed) |
+
 ## 2. Calculated values
 
 Grouped by area, with a flag for whether later cells use them and whether they are critical.
@@ -122,6 +134,20 @@ Grouped by area, with a flag for whether later cells use them and whether they a
 | `mast_D`, `span_z` | Friction radius, plots | Medium |
 | `mast_opt`, `mast_sweep` (lightest mast meeting the survival deflection limit, by sail area × AR, on the same grid as `sweep_areas`/`sweep_ars`) | Not used later; informs the mast size (`dfrac_in`) | No |
 | `drive` (hold, peak and survival torque, motor torques, rpm, power) | Summary | **Yes** |
+
+### Design study (after the Design Summary)
+| Output | Used downstream | Critical |
+|---|---|---|
+| `step_at(x, dz, y)` (mast step vector, x clipped to the hull) | `mast_step`, `evaluate` | Yes |
+| `make_rig(..., step)`, `rig_for(area, ar, step)`, `helm(r, rig, step)` (the same functions with an optional step) | Study, sizing sweeps | Yes |
+| `mast_loads(rig, step)` (design and survival moments, root shear, heeling moment) | `mast_opt`, `evaluate` | Yes |
+| `tube_response(moment, z, od, id_, gap, shear_root)` (uniform tube: stress, strength margin, deflection fraction, mass, wall) | `evaluate` | Yes |
+| `cb_masses`, `cb_y`, `gz_fast`, `rm_peak_fast` (righting moment for any total mass and CG without re-slicing the hull; matches `gz_curve` to about 1e-5) | `evaluate` | Yes |
+| `evaluate(d)` (one design in, 17 margins, raw values and flags out) | Study cells, `study_base` | **Yes** |
+| `snap_tube`, `study_base` | Study cells | Medium |
+| `map_*` (area × AR grid), `line_*` (tube and step sweeps) | Plots only | No |
+
+The study shades the **objectives** (survival, deflection, strength, usable stability range) and applies the **thresholds** (speeds, total mass, wall, OD, mast length, sail area, air draft, tube fit) as contours with the failing side hatched. A "Run design study" button gates the sweeps (about two minutes).
 
 ### Final outputs (all in the Design Summary)
 There are 14 PASS / MARGINAL / FAIL checks. The three speed rows also show the 0 to 0.45 m transom-fairing range:

@@ -39,6 +39,10 @@ Still open:
 
 ## P4: Unfinished sections
 
+- **Design study simplifications.** The study uses a uniform mast tube snapped to a stock list, while the single-design cells size a tube that tapers with the chord. Its righting moment is a mass-interpolated buoyancy table (`rm_peak_fast`), and speeds use a 20 deg wind-angle grid, so it agrees with the Design Summary to a few percent, not exactly. The map holds the current stock tube fixed, so large sails show where it runs out; a per-point lightest-tube choice would make the map answer "what mast does each sail need". The one-way all-up correction is inherited (resistance and the force balance keep the hull-only waterline).
+- **Design study placeholders.** `od_max`, `mast_len_max`, `area_max`, `mass_max` and `tube_stock` are guesses, and the manufacturing bulk figure (mean chord² × thickness ratio) is a proxy, not a cost.
+- **The older sizing sweep and `mast_sweep` are partly superseded** by the study, which includes rig mass. Keep or remove them once the study is trusted.
+
 - **Sail sizing sweep does not recompute rig mass.** The speed sweep ignores it. The Mast Sizing section gives the lightest spar for each area, but skin and fixed mass are not added to the sweep.
 - **Gust response and motor torque limits** are not modelled in the drivetrain section.
 

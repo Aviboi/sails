@@ -94,6 +94,10 @@ def inputs_design(Group, Param):
         hull_axes=Param('Z-up (as exported)', "", "STL export axes"),
         hull_flip=Param(True, "", "Flip so the bow points to +x"),
         hull_center=Param(True, "", "Recentre: x=0 at stern, y=0 on centerline, z=0 at keel tip"),
+    area_range=Param((0.4, 2.0), "m²", "Design study: sail area range"),
+    ar_range=Param((1.5, 4.0), "", "Design study: aspect ratio range"),
+    step_x_range=Param((0.6, 1.6), "m", "Design study: mast step x range"),
+    gap_range=Param((0.0, 0.3), "m", "Design study: deck-to-sail-foot gap range (step height above hull top)"),
     )
     return (design,)
 
@@ -113,6 +117,10 @@ def inputs_requirements(Group, Param):
         sf_torque=Param(2.0, "", "Safety factor on torque"),
         margin_flag=Param(0.10, "", "Summary flags a margin below this as MARGINAL"),
         defl_limit=Param(0.10, "span", "Max survival tip deflection, fraction of span"),
+    od_max=Param(60.0, "mm", "Max mast outer diameter the drivetrain can mount (placeholder)"),
+    mast_len_max=Param(2.5, "m", "Max mast length, deck to top (placeholder)"),
+    area_max=Param(3.0, "m²", "Max sail area that can be built and handled (placeholder)"),
+    mass_max=Param(60.0, "kg", "Max total mass, hull + rig (placeholder)"),
     )
     return (requirements,)
 
@@ -173,6 +181,14 @@ def inputs_assumptions(Group, Param):
         viterna_b=Param(0.018, "", "Viterna post-stall CD_max = a + b·AR"),
         alpha_polar=Param(30.0, "deg", "Sail polar is NeuralFoil data up to here, flat-plate extension beyond"),
         shell_frac=Param(0.05, "", "hull_shell: fraction of height separating the shell from the fins"),
+    tube_stock=Param(
+        ((20, 16), (20, 18), (25, 21), (25, 22), (30, 26), (30, 27), (35, 31), (35, 32), (40, 36), (40, 37),
+         (45, 41), (45, 42), (50, 46), (50, 47), (55, 51), (60, 56)),
+        "mm (OD, ID)", "Stock carbon tube sizes (placeholder range, no supplier list yet)"),
+    cb_table_n=Param(6, "", "Masses in the buoyancy-centre table used by the study's fast righting moment"),
+    study_points_map=Param(12, "", "Design study: points per axis on a map"),
+    study_points_line=Param(9, "", "Design study: points per margin-line sweep"),
+        study_twa_step=Param(20, "deg", "Design study: true wind angle step in each evaluation (coarser is faster; 10 deg is 2.5x slower, within about 1.5% of speed)"),
     )
     return (assumptions,)
 
@@ -1239,8 +1255,14 @@ def _(
     step_y_in,
     up,
 ):
-    _deck = float(np.interp(step_x_in.value, fb_x, fb_top))
-    mast_step = np.array([step_x_in.value, step_y_in.value, _deck + step_dz_in.value])
+    def step_at(x, dz, y=0.0):
+        """Mast step [x, y, z] in the hull frame: x clipped to the hull, z the hull top at x plus the gap dz."""
+        x = float(np.clip(x, fb_x.min(), fb_x.max()))
+        return np.array([x, y, float(np.interp(x, fb_x, fb_top)) + dz])
+
+
+    mast_step = step_at(step_x_in.value, step_dz_in.value, step_y_in.value)
+    _deck = mast_step[2] - step_dz_in.value
     _wl = draft
     _lwl = hs["wp"]["lwl"]
     _rows = [
@@ -1274,7 +1296,7 @@ def _(
         mo.ui.table([{"Property": k, "Value": v} for k, v in _rows], selection=None, pagination=False),
         _fig,
     ])
-    return (mast_step,)
+    return mast_step, step_at
 
 
 @app.cell(hide_code=True)
@@ -2201,13 +2223,17 @@ def _(
         }
 
 
-    def make_rig(sail_, sp_, cn_, ar_eff):
-        """Everything the force balance needs from a sail: its extended polar and the heights of its centre of effort."""
+    def make_rig(sail_, sp_, cn_, ar_eff, step=None):
+        """Everything the force balance needs from a sail: its extended polar and the heights of its centre of effort.
+
+        step: mast step [x, y, z] (default the notebook's mast_step).
+        """
+        z0 = (mast_step if step is None else step)[2]
         ce_h = 4 * sail_["b"] / (3 * np.pi)
         return {
             "sail": sail_, "polar": extend_polar(sp_, sail_, cn_, ar_eff),
-            "ce_wl": mast_step[2] - draft + ce_h,  # lift centroid above the waterline
-            "arm": mast_step[2] + ce_h - up["clp_z"],  # lift centroid above the CLP
+            "ce_wl": z0 - draft + ce_h,  # lift centroid above the waterline
+            "arm": z0 + ce_h - up["clp_z"],  # lift centroid above the CLP
         }
 
 
@@ -2328,11 +2354,11 @@ def _(
         return max(ok, key=lambda r: r["V"]) if ok else min(rs, key=lambda r: r["heel"])
 
 
-    def helm(r, rig=rig0):
+    def helm(r, rig=rig0, step=None):
         """Centre-of-effort lead ahead of the CLP (m) and the rudder angle (deg) that holds it, for a solved state."""
         xcp = np.interp(r["alpha"], rig["polar"]["alpha"], rig["polar"]["xcp"])
         delta = np.radians(r["awa"] - r["alpha"])
-        x_ce = mast_step[0] - (xcp - sail_mast_in.value) * rig["sail"]["mac"] * np.cos(delta)
+        x_ce = (mast_step if step is None else step)[0] - (xcp - sail_mast_in.value) * rig["sail"]["mac"] * np.cos(delta)
         lead = x_ce - up["clp_x"]
         if r["V"] <= 0:
             return lead, np.nan
@@ -2542,13 +2568,14 @@ def _(
     wind_states,
     zref_in,
 ):
-    def rig_for(area, ar):
-        """Force-balance rig for another sail area and aspect ratio, with the same taper, section and mast."""
+    def rig_for(area, ar, step=None):
+        """Force-balance rig for another sail area and aspect ratio (and optionally mast step), with the same taper, section and mast."""
+        st = mast_step if step is None else step
         s = sail_planform(area, ar, sail_taper_in.value)
-        v = float(wind_at(mast_step[2] - draft + s["z_mac"], vdes_in.value * KNOT, zref_in.value, alpha_in.value))
+        v = float(wind_at(st[2] - draft + s["z_mac"], vdes_in.value * KNOT, zref_in.value, alpha_in.value))
         p = sail_polar(sail_tc_in.value / 100, v * s["mac"] / nu_air, sail_arf_in.value * ar, sail_taper_in.value)
         cn = p["CL"] * np.cos(np.radians(p["alpha"])) + p["CD"] * np.sin(np.radians(p["alpha"]))
-        return make_rig(s, p, cn, sail_arf_in.value * ar)
+        return make_rig(s, p, cn, sail_arf_in.value * ar, st)
 
 
     _rig_h = draft + airdraft_in.value - mast_step[2]
@@ -2798,12 +2825,83 @@ def _(
     KNOT,
     alpha_in,
     cn_lock_in,
-    dfrac_in,
     draft,
     emod_in,
+    rho_air,
+    rho_mat_in,
+    sf_in,
+    sigma_in,
+    up,
+    v_req,
+    wind_at,
+    wind_states,
+    zref_in,
+):
+    def mast_loads(rig, step, n=120):
+        """Spanwise mast loads for a rig and mast step, for the design and survival cases.
+
+        Returns {case: dict(z, chord, moment, shear_root, heel_m, v_ref, cn)}. z is height above the sail root (m),
+        moment is the bending moment (N m) at each z from the tip down, shear_root the horizontal load at the root (N),
+        and heel_m the heeling moment about the centre of lateral resistance (N m).
+        """
+        s, p = rig["sail"], rig["polar"]
+        z = np.linspace(0.0, s["b"], n)
+        seg = np.diff(z)
+        chord = s["c_root"] + (s["c_tip"] - s["c_root"]) * z / s["b"]
+        a = np.asarray(p["alpha"])
+        cn = p["CL"] * np.cos(np.radians(a)) + p["CD"] * np.sin(np.radians(a))
+        cn_max = float(cn[(a >= 0) & (a <= 30)].max())
+        z_wl = step[2] - draft + z
+        cases = (
+            ("Design", wind_states["Design"] + v_req * KNOT, cn_max),
+            ("Survival", wind_states["Survival"], cn_lock_in.value),
+        )
+        out = {}
+        for name, v_ref, c_n in cases:
+            w = 0.5 * rho_air * wind_at(z_wl, v_ref, zref_in.value, alpha_in.value) ** 2 * c_n * chord
+            shear = np.r_[np.cumsum(((w[1:] + w[:-1]) / 2 * seg)[::-1])[::-1], 0.0]
+            moment = np.r_[np.cumsum(((shear[1:] + shear[:-1]) / 2 * seg)[::-1])[::-1], 0.0]
+            arm = float(moment[0] / shear[0])
+            out[name] = dict(z=z, chord=chord, moment=moment, shear_root=float(shear[0]),
+                             heel_m=float(shear[0] * (step[2] + arm - up["clp_z"])), v_ref=v_ref, cn=c_n)
+        return out
+
+
+    def tube_response(moment, z, od, id_, gap=0.0, shear_root=0.0, length=None):
+        """Response of a uniform tube (od, id_ in m) to the bending moment (N m) on the sail span z (m).
+
+        gap is the bare mast between the deck and the sail root: it carries shear_root over that length, so the
+        moment at the deck is moment[0] + shear_root * gap. Returns stress (Pa, at the deck), strength_margin
+        (1 - stress * safety factor / ultimate), defl_frac (tip deflection / sail span), mass (kg, over `length`,
+        default sail span + gap) and wall (m). A tube with id_ >= od has no section: stress and deflection are inf.
+        """
+        wall = (od - id_) / 2
+        length = z[-1] + max(gap, 0.0) if length is None else length
+        if wall <= 0:
+            return dict(stress=np.inf, strength_margin=-np.inf, defl_frac=np.inf, mass=0.0, wall=wall, I=0.0)
+        inertia = np.pi * (od**4 - id_**4) / 64
+        m_deck = moment[0] + shear_root * max(gap, 0.0)
+        stress = m_deck * (od / 2) / inertia
+        zz, mm = (np.r_[-gap, z], np.r_[m_deck, moment]) if gap > 0 else (z, moment)
+        k = mm / (emod_in.value * 1e9 * inertia)
+        slope = np.r_[0.0, np.cumsum((k[1:] + k[:-1]) / 2 * np.diff(zz))]
+        defl = np.r_[0.0, np.cumsum((slope[1:] + slope[:-1]) / 2 * np.diff(zz))]
+        return dict(
+            stress=float(stress), strength_margin=float(1 - stress * sf_in.value / (sigma_in.value * 1e6)),
+            defl_frac=float(defl[-1] / z[-1]), mass=float(rho_mat_in.value * np.pi / 4 * (od**2 - id_**2) * length),
+            wall=float(wall), I=float(inertia),
+        )
+
+    return mast_loads, tube_response
+
+
+@app.cell
+def _(
+    dfrac_in,
+    emod_in,
+    mast_loads,
     mast_step,
     requirements,
-    rho_air,
     rho_mat_in,
     rig_for,
     sail_mast_in,
@@ -2811,29 +2909,17 @@ def _(
     sf_in,
     sigma_in,
     tmin_in,
-    v_req,
-    wind_at,
-    wind_states,
-    zref_in,
 ):
     def mast_opt(area, ar):
         """Lightest mast for a sail of this area and aspect ratio that meets the survival deflection limit, or None."""
         rg = rig_for(area, ar)
-        s, p = rg["sail"], rg["polar"]
-        z = np.linspace(0.0, s["b"], 120)
+        s = rg["sail"]
+        loads = mast_loads(rg, mast_step, 120)
+        z, chord = loads["Design"]["z"], loads["Design"]["chord"]
         seg = np.diff(z)
-        chord = s["c_root"] + (s["c_tip"] - s["c_root"]) * z / s["b"]
-        a = np.asarray(p["alpha"])
-        cn = p["CL"] * np.cos(np.radians(a)) + p["CD"] * np.sin(np.radians(a))
-        cn_max = float(cn[(a >= 0) & (a <= 30)].max())
         x = sail_mast_in.value
         t_mast = 10 * sail_tc_in.value / 100 * (0.2969 * np.sqrt(x) - 0.1260 * x - 0.3516 * x**2 + 0.2843 * x**3 - 0.1036 * x**4)
-        z_wl = mast_step[2] - draft + z
-        moments = {}
-        for name, v_ref, c_n in (("Design", wind_states["Design"] + v_req * KNOT, cn_max), ("Survival", wind_states["Survival"], cn_lock_in.value)):
-            w = 0.5 * rho_air * wind_at(z_wl, v_ref, zref_in.value, alpha_in.value) ** 2 * c_n * chord
-            shear = np.r_[np.cumsum(((w[1:] + w[:-1]) / 2 * seg)[::-1])[::-1], 0.0]
-            moments[name] = np.r_[np.cumsum(((shear[1:] + shear[:-1]) / 2 * seg)[::-1])[::-1], 0.0]
+        moments = {k: v["moment"] for k, v in loads.items()}
 
         def spar(f, moment):
             D = f * t_mast * chord
@@ -2971,7 +3057,170 @@ def _(
         mo.ui.table([{"Property": a, "Value": b, "Note": c} for a, b, c in _rows], selection=None, pagination=False),
         mo.callout(f"Survival heeling moment {surv_moment:.0f} N m exceeds the peak righting moment {rm_peak_all:.0f} N m with the rig.", kind="danger") if _over else mo.md(""),
     ])
-    return rm_peak_all, surv_moment, total_mass
+    return hull_surv_moment, rm_peak_all, surv_moment, total_mass
+
+
+@app.cell
+def _(G, assumptions, gz_curve, gz_heel, hull, mass_in, requirements, rho_in):
+    # buoyancy-centre y (earth frame) versus heel, at a few total masses; it depends on displacement only
+    cb_masses = np.linspace(mass_in.value, requirements.mass_max.value, assumptions.cb_table_n.value)
+    cb_y = np.array([
+        [r["cb"][1] for r in gz_curve(hull, _m, rho_in.value, np.array([0.0, 0.0, 0.0]), gz_heel)]
+        for _m in cb_masses
+    ])
+
+
+    def gz_fast(total_mass, cg):
+        """GZ (m) at each angle in gz_heel for the total mass and hull-fixed CG (LCG, TCG, KG), from the cb_y table.
+
+        The CG rotates about the keel-level midship axis; GZ is its y offset from the interpolated centre of buoyancy.
+        NaN above the table's mass range or when the hull cannot float the mass.
+        """
+        if total_mass > cb_masses[-1] or total_mass >= hull.volume * rho_in.value:
+            return np.full(len(gz_heel), np.nan)
+        h = np.radians(gz_heel)
+        cb = np.array([np.interp(total_mass, cb_masses, cb_y[:, i]) for i in range(len(gz_heel))])
+        return cg[1] * np.cos(h) - cg[2] * np.sin(h) - cb
+
+
+    def rm_peak_fast(total_mass, cg):
+        """Peak righting moment (N m) up to the first GZ maximum, as rm_peak_all but without re-slicing the hull."""
+        gz = gz_fast(total_mass, cg)
+        if np.isnan(gz).any():
+            return float("nan")
+        return float(gz[int(np.argmax(gz))] * total_mass * G)
+
+    return gz_fast, rm_peak_fast
+
+
+@app.cell
+def _(
+    KNOT,
+    airdraft_in,
+    assumptions,
+    best_trim,
+    df_angle,
+    draft,
+    fixed_in,
+    gz_fast,
+    gz_heel,
+    helm,
+    hs,
+    hull_surv_moment,
+    kg_in,
+    lcg_in,
+    mass_in,
+    mast_loads,
+    maxheel_in,
+    maxlead_in,
+    maxrig_in,
+    requirements,
+    rig_for,
+    rm_peak_fast,
+    sail_mast_in,
+    sail_tc_in,
+    skin_in,
+    step_at,
+    step_y_in,
+    tcg_in,
+    tmin_in,
+    tube_response,
+    twa_min_in,
+    v_req,
+    wind_states,
+):
+    def evaluate(d, twa_step=None):
+        """Performance and a margin for every check of one design.
+
+        d: dict with area (m2), ar, step_x (m), gap (m, deck to sail root), od and id (tube diameters, mm).
+        Everything else comes from the notebook inputs. Returns dict(margins, values, flags). A margin is
+        fractional and positive when the check passes (1 - value / maximum, or value / minimum - 1); it is NaN
+        when the design cannot be evaluated (for example a total mass the hull cannot float).
+        """
+        flags = []
+        step = step_at(d["step_x"], d["gap"], step_y_in.value)
+        if abs(step[0] - d["step_x"]) > 1e-9:
+            flags.append("step x clipped to the hull")
+        gap = max(d["gap"], 0.0)
+        od, id_ = d["od"] * 1e-3, d["id"] * 1e-3
+        rg = rig_for(d["area"], d["ar"], step)
+        s = rg["sail"]
+        span = s["b"]
+        mast_len = span + gap
+
+        ld = mast_loads(rg, step)
+        tube = {k: tube_response(v["moment"], v["z"], od, id_, gap, v["shear_root"]) for k, v in ld.items()}
+        skin = skin_in.value * 2 * s["S"] * (1 + 0.2 * sail_tc_in.value / 100)
+        rig_mass_ = tube["Survival"]["mass"] + skin + fixed_in.value
+        total = mass_in.value + rig_mass_
+        zbar = span * (s["c_root"] + 2 * s["c_tip"]) / (3 * (s["c_root"] + s["c_tip"]))
+        parts = [
+            (mass_in.value, lcg_in.value, tcg_in.value, kg_in.value),
+            (tube["Survival"]["mass"] + skin, step[0], step[1], step[2] + zbar),
+            (fixed_in.value, step[0], step[1], step[2]),
+        ]
+        cg = np.array([sum(p[0] * p[i] for p in parts) / total for i in (1, 2, 3)])
+
+        gz = gz_fast(total, cg)
+        rm_peak = rm_peak_fast(total, cg)
+        surv_moment_ = ld["Survival"]["heel_m"] + hull_surv_moment
+        heel_cap = float(gz_heel[-1])
+        if not np.isnan(gz).any():
+            _neg = np.where(gz <= 0)[0]
+            _neg = _neg[_neg > 0]
+            if len(_neg):
+                _i = _neg[0]
+                heel_cap = float(gz_heel[_i - 1] + (gz_heel[_i] - gz_heel[_i - 1]) * gz[_i - 1] / (gz[_i - 1] - gz[_i]))
+            if df_angle is not None:
+                heel_cap = min(heel_cap, float(df_angle))
+
+        twas = np.arange(twa_min_in.value, 180.01, assumptions.study_twa_step.value if twa_step is None else twa_step)
+        runs = {}
+        try:
+            for name in ("Minimum", "Design"):
+                runs[name] = [best_trim(t, wind_states[name], maxheel_in.value, rg) for t in twas]
+            for r in runs["Design"]:
+                r["lead"], _ = helm(r, rg, step)
+            v_best = max(r["V"] for r in runs["Design"]) / KNOT
+            v_reach = min(r["V"] for r in runs["Design"] if r["twa"] >= 90) / KNOT
+            v_minw = max(r["V"] for r in runs["Minimum"]) / KNOT
+            heel_max = max(r["heel"] for r in runs["Design"])
+            lead_max = max(abs(r["lead"]) for r in runs["Design"])
+        except (ValueError, RuntimeError) as e:
+            flags.append(f"force balance failed: {e}")
+            v_best = v_reach = v_minw = heel_max = lead_max = float("nan")
+
+        x = sail_mast_in.value
+        t_frac = 10 * sail_tc_in.value / 100 * (0.2969 * np.sqrt(x) - 0.1260 * x - 0.3516 * x**2 + 0.2843 * x**3 - 0.1036 * x**4)
+        rig_h = draft + airdraft_in.value - step[2]
+        req = requirements
+        margins = dict(
+            survival=1 - surv_moment_ / rm_peak,
+            deflection=1 - tube["Survival"]["defl_frac"] / req.defl_limit.value,
+            strength=min(t["strength_margin"] for t in tube.values()),
+            stability_range=1 - maxheel_in.value / heel_cap,
+            heel=1 - heel_max / maxheel_in.value,
+            speed_design=v_best / v_req - 1,
+            speed_reach=v_reach / v_req - 1,
+            speed_min_wind=v_minw / v_req - 1,
+            lead=1 - lead_max / (maxlead_in.value * hs["wp"]["lwl"]),
+            mass=1 - total / req.mass_max.value,
+            rig_mass=1 - rig_mass_ / maxrig_in.value,
+            wall=(od - id_) / 2 / (tmin_in.value * 1e-3) - 1,
+            od=1 - d["od"] / req.od_max.value,
+            mast_len=1 - mast_len / req.mast_len_max.value,
+            area=1 - s["S"] / req.area_max.value,
+            air_draft=1 - span / rig_h,
+            fit=1 - od / (t_frac * s["c_tip"]),
+        )
+        values = dict(
+            v_design=v_best, v_reach=v_reach, v_min_wind=v_minw, total_mass=total, rig_mass=rig_mass_, span=span,
+            mast_len=mast_len, mac=s["mac"], bulk=s["mac"] ** 2 * sail_tc_in.value / 100, heel_max=heel_max,
+            surv_moment=surv_moment_, rm_peak=rm_peak, defl_frac=tube["Survival"]["defl_frac"], wall=(od - id_) / 2,
+        )
+        return dict(margins={k: float(v) for k, v in margins.items()}, values=values, flags=flags)
+
+    return (evaluate,)
 
 
 @app.cell
@@ -3209,6 +3458,252 @@ def _(
         mo.callout("Fails: " + "; ".join(_fails) + ".", kind="danger") if _fails
         else mo.callout("All criteria are met" + (f", with thin margins on: {'; '.join(_marg)}." if _marg else "."),
                         kind="warn" if _marg else "success"),
+    ])
+    return
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    ## Design Study
+
+    The sections above evaluate one design. This section sweeps the design variables (sail area, aspect ratio, mast step position, deck gap, and the mast tube outer and inner diameter) to show how the margins move and which requirement binds where. Requirements and modelling choices stay as inputs; designs and their performance are the outputs.
+
+    `evaluate(d)` returns a margin for each check, positive when it passes. **Objectives** are the survivability and stability margins: the survival heeling moment against the righting moment with the rig, the mast deflection and strength, and the heel limit against the usable stability range. **Thresholds** are speed, total mass, and the manufacturing limits (minimum wall, maximum outer diameter, mast length, sail area); beyond the limit a design fails, inside it they do not affect the shading. The mast is a uniform tube, snapped to the stock sizes in the assumptions, so it differs slightly from the tapered tube sized above. The righting moment uses a fast interpolation of the hull's centre of buoyancy and the speeds use a coarser wind-angle grid, so the study agrees with the Design Summary to a few percent.
+    """)
+    return
+
+
+@app.cell
+def _(assumptions, mast_D, mast_step, sail, step_dz_in, struct):
+    def snap_tube(od_mm, id_mm):
+        """Nearest stock tube (OD, ID in mm): the closest outer diameter, then the closest wall thickness."""
+        stock = [tuple(p) for p in assumptions.tube_stock.value]
+        od_best = min(stock, key=lambda p: abs(p[0] - od_mm))[0]
+        wall = (od_mm - id_mm) / 2
+        return min((p for p in stock if p[0] == od_best), key=lambda p: abs((p[0] - p[1]) / 2 - wall))
+
+
+    _od, _id = snap_tube(mast_D[0] * 1e3, (mast_D[0] - 2 * struct["Survival"]["t"][0]) * 1e3)
+    study_base = dict(area=sail["S"], ar=sail["ar"], step_x=float(mast_step[0]), gap=step_dz_in.value, od=_od, id=_id)
+    return snap_tube, study_base
+
+
+@app.cell
+def _():
+    margin_labels = {
+        "survival": "Survival moment vs righting moment",
+        "deflection": "Survival tip deflection",
+        "strength": "Mast strength (safety factor)",
+        "stability_range": "Max heel vs usable stability range",
+        "heel": "Peak steady heel",
+        "speed_design": "Best speed, design wind",
+        "speed_reach": "Slowest speed, TWA 90 deg and aft",
+        "speed_min_wind": "Best speed, minimum wind",
+        "lead": "CE-CLP lead",
+        "mass": "Total mass",
+        "rig_mass": "Rig mass",
+        "wall": "Mast wall thickness",
+        "od": "Mast outer diameter",
+        "mast_len": "Mast length",
+        "area": "Sail area",
+        "air_draft": "Rig span under air draft",
+        "fit": "Tube fits the section at the tip",
+    }
+    study_objectives = ("survival", "deflection", "strength", "stability_range")
+    study_colors = ["#0072B2", "#E69F00", "#009E73", "#D55E00", "#CC79A7", "#56B4E9"]
+    study_styles = ["-", "--", "-.", ":", (0, (5, 1)), (0, (1, 1))]
+    return margin_labels, study_colors, study_objectives, study_styles
+
+
+@app.cell
+def _():
+    study_run = mo.ui.run_button(label="Run design study")
+    mo.hstack([study_run, mo.md("Each map takes about a minute and a half; the margin-line sweeps about 20 seconds.")], justify="start")
+    return (study_run,)
+
+
+@app.cell
+def _(
+    assumptions,
+    design,
+    evaluate,
+    margin_labels,
+    study_base,
+    study_objectives,
+    study_run,
+):
+    mo.stop(not study_run.value, mo.md("*Click **Run design study** to compute the maps.*"))
+    _n = assumptions.study_points_map.value
+    map_areas = np.linspace(*design.area_range.value, _n)
+    map_ars = np.linspace(*design.ar_range.value, _n)
+    _res = [[evaluate({**study_base, "area": float(a), "ar": float(r)}) for a in map_areas] for r in map_ars]  # rows: AR, columns: area
+    map_margin = {k: np.array([[c["margins"][k] for c in row] for row in _res]) for k in _res[0][0]["margins"]}
+    map_bulk = np.array([[c["values"]["bulk"] for c in row] for row in _res])
+    map_objective = np.min([map_margin[k] for k in study_objectives], axis=0)  # NaN where the design cannot be evaluated
+    _thr = ("speed_min_wind", "speed_reach", "speed_design", "mass", "air_draft", "mast_len", "fit", "area")
+    map_binding = [k for k in _thr if np.nanmin(map_margin[k]) < 0 < np.nanmax(map_margin[k])]
+    map_always_fail = [k for k in _thr if np.nanmax(map_margin[k]) < 0]
+    map_thresholds = mo.ui.multiselect(
+        options={margin_labels[k]: k for k in _thr}, value=[margin_labels[k] for k in map_binding],
+        label="Thresholds drawn as contours; the hatched side fails",
+    )
+    return (
+        map_always_fail,
+        map_areas,
+        map_ars,
+        map_bulk,
+        map_margin,
+        map_objective,
+        map_thresholds,
+    )
+
+
+@app.cell
+def _(
+    assumptions,
+    design,
+    evaluate,
+    snap_tube,
+    study_base,
+    study_run,
+    tmin_in,
+):
+    mo.stop(not study_run.value, mo.md("*Click **Run design study** to compute the margin lines.*"))
+    _n = assumptions.study_points_line.value
+    _wall0 = (study_base["od"] - study_base["id"]) / 2
+    _ods = sorted({p[0] for p in assumptions.tube_stock.value})
+    _walls = np.linspace(tmin_in.value, 5.0, _n)
+    _sweeps = {
+        "step_x": ("Mast step x from stern (m)", np.linspace(*design.step_x_range.value, _n),
+                   lambda x: {**study_base, "step_x": float(x)}, None),
+        "gap": ("Deck to sail root gap (m)", np.linspace(*design.gap_range.value, _n),
+                lambda x: {**study_base, "gap": float(x)}, None),
+        "od": ("Mast outer diameter (mm), stock tube at the current wall", np.array(_ods, dtype=float),
+               lambda x: {**study_base, "od": x, "id": snap_tube(x, x - 2 * _wall0)[1]}, 60),
+        "wall": ("Mast wall thickness (mm), current outer diameter", _walls,
+                 lambda x: {**study_base, "id": study_base["od"] - 2 * x}, 60),
+    }
+    line_x = {k: v[1] for k, v in _sweeps.items()}
+    line_xlabel = {k: v[0] for k, v in _sweeps.items()}
+    line_margin = {}
+    for _k, (_lab, _xs, _mk, _tw) in _sweeps.items():
+        _r = [evaluate(_mk(_x), twa_step=_tw) for _x in _xs]
+        line_margin[_k] = {m: np.array([c["margins"][m] for c in _r]) for m in _r[0]["margins"]}
+    return line_margin, line_x, line_xlabel
+
+
+@app.cell
+def _(evaluate, margin_labels, requirements, study_base):
+    _b = evaluate(study_base)
+    _rows = [
+        {"Check": margin_labels[k], "Margin": f"{v:+.0%}",
+         "Status": "FAIL" if v < 0 else ("MARGINAL" if v < requirements.margin_flag.value else "PASS")}
+        for k, v in sorted(_b["margins"].items(), key=lambda kv: kv[1])
+    ]
+    mo.vstack([
+        mo.md(
+            rf"**What binds at the current design** (area {study_base['area']:.2f} $\mathrm{{m^2}}$, AR {study_base['ar']:.2f}, step x {study_base['step_x']:.2f} m, "
+            rf"gap {study_base['gap']:.2f} m, stock tube {study_base['od']} x {study_base['id']} mm), tightest first. Positive margin passes."
+        ),
+        mo.ui.table(_rows, selection=None, pagination=False),
+    ])
+    return
+
+
+@app.cell
+def _(
+    map_always_fail,
+    map_areas,
+    map_ars,
+    map_bulk,
+    map_margin,
+    map_objective,
+    map_thresholds,
+    margin_labels,
+    study_base,
+    study_colors,
+    study_styles,
+):
+    import matplotlib.colors as _mc
+    import matplotlib.lines as _ml
+
+    _sel = map_thresholds.value
+    _X, _Y = np.meshgrid(map_areas, map_ars)
+    _fail = np.zeros(map_objective.shape, bool)
+    for _k in _sel:
+        _fail |= map_margin[_k] < 0
+    _obj = np.ma.masked_invalid(map_objective)
+    _lim = max(0.25, min(1.0, float(np.nanmax(np.abs(map_objective))))) if np.isfinite(map_objective).any() else 1.0
+    _fig, _axs = plt.subplots(1, 2, figsize=(11.5, 4.3), sharey=True)
+    _pc = _axs[0].pcolormesh(_X, _Y, _obj, cmap="RdBu", norm=_mc.TwoSlopeNorm(0.0, -_lim, _lim), shading="nearest")
+    _fig.colorbar(_pc, ax=_axs[0], label="Worst objective margin")
+    _pb = _axs[1].pcolormesh(_X, _Y, map_bulk, cmap="Blues", shading="nearest")
+    _fig.colorbar(_pb, ax=_axs[1], label=r"Sail bulk: mean chord$^2 	imes$ t/c ($\mathrm{m^2}$)")
+    _handles = []
+    for _i, _k in enumerate(_sel):
+        _c, _ls = study_colors[_i % len(study_colors)], study_styles[_i % len(study_styles)]
+        for _ax in _axs:
+            if np.nanmin(map_margin[_k]) < 0 < np.nanmax(map_margin[_k]):
+                _ax.contour(_X, _Y, map_margin[_k], levels=[0.0], colors=[_c], linestyles=[_ls], linewidths=1.8)
+        _handles.append(_ml.Line2D([], [], color=_c, ls=_ls, lw=1.8, label=margin_labels[_k]))
+    for _ax in _axs:
+        if _fail.any():
+            _ax.pcolor(_X, _Y, np.ma.masked_where(~_fail, np.ones(_fail.shape)), shading="nearest", hatch="//",
+                       facecolor="none", edgecolor="#4b5563", linewidth=0)
+        _ax.plot([study_base["area"]], [study_base["ar"]], marker="*", ms=14, mfc="#facc15", mec="black", ls="", zorder=5)
+        _ax.set(xlabel=r"Sail area ($\mathrm{m^2}$)")
+    _axs[0].set_ylabel("Aspect ratio")
+    _axs[0].set_title("Survivability and stability margin (blue passes)", fontsize=10)
+    _axs[1].set_title("Manufacturing: sail bulk (lighter is easier)", fontsize=10)
+    _handles.append(_ml.Line2D([], [], marker="*", ms=12, mfc="#facc15", mec="black", ls="", label="current design"))
+    _axs[0].legend(handles=_handles, loc="upper center", bbox_to_anchor=(1.12, -0.16), ncol=3, fontsize=8, frameon=False)
+    _fig.tight_layout()
+    _notes = []
+    if map_always_fail:
+        _notes.append("Fails everywhere on this map: " + ", ".join(margin_labels[k].lower() for k in map_always_fail) + ".")
+    _notes.append("The mast is the current stock tube on every point, so large sails show where it runs out of strength or stiffness.")
+    mo.vstack([map_thresholds, _fig, mo.md(" ".join(_notes))])
+    return
+
+
+@app.cell
+def _(
+    line_margin,
+    line_x,
+    line_xlabel,
+    margin_labels,
+    study_base,
+    study_colors,
+    study_styles,
+):
+    _x0 = {"step_x": study_base["step_x"], "gap": study_base["gap"], "od": float(study_base["od"]),
+           "wall": (study_base["od"] - study_base["id"]) / 2}
+    def _panel(ax, key, keys):
+        for _i, _m in enumerate(keys):
+            ax.plot(line_x[key], np.clip(line_margin[key][_m], -1, 1), color=study_colors[_i], ls=study_styles[_i],
+                    lw=1.8, marker="o", ms=3.5, label=margin_labels[_m])
+        ax.axhspan(-1.05, 0, color="#b91c1c", alpha=0.06)
+        ax.axhline(0, color="#374151", lw=0.9, ls=(0, (4, 3)))
+        ax.axvline(_x0[key], color="#6b7280", lw=0.9, ls=":")
+        ax.set(ylim=(-1.05, 1.05), xlabel=line_xlabel[key])
+        ax.grid(alpha=0.3)
+    def _figure(keys_by_panel, keys):
+        fig, axs = plt.subplots(1, 2, figsize=(11.5, 3.9), sharey=True)
+        for ax, k in zip(axs, keys_by_panel):
+            _panel(ax, k, keys)
+        axs[0].set_ylabel(r"Margin (0 = limit, clipped to $\pm$100%)")
+        h, l = axs[0].get_legend_handles_labels()
+        fig.legend(h, l, loc="lower center", ncol=3, fontsize=8, frameon=False)
+        fig.tight_layout(rect=(0, 0.12, 1, 1))
+        return fig
+    _tube = _figure(("od", "wall"), ("strength", "deflection", "wall", "od", "fit", "rig_mass"))
+    _step = _figure(("step_x", "gap"), ("lead", "survival", "stability_range", "air_draft", "mast_len", "heel"))
+    mo.vstack([
+        mo.md("**Mast tube.** Margin of each check as the tube changes; the dotted line is the current tube. Stock tubes are used in the diameter sweep, the wall sweep is continuous."),
+        _tube,
+        mo.md("**Mast step.** Margin of each check as the step moves along the hull and as the sail root is raised off the deck."),
+        _step,
     ])
     return
 
