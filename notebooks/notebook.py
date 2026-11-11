@@ -2552,12 +2552,12 @@ def _(
 
 
     _rig_h = draft + airdraft_in.value - mast_step[2]
-    _areas = np.array([0.4, 0.65, 1.0, 1.5, 2.0, 3.0, 4.0])
-    _ars = [1.5, 2.5, 3.5]
+    sweep_areas = np.array([0.4, 0.65, 1.0, 1.5, 2.0, 3.0, 4.0])
+    sweep_ars = [1.5, 2.5, 3.5]
     sweep = {}
-    for _ar in _ars:
+    for _ar in sweep_ars:
         _row = []
-        for _a in _areas:
+        for _a in sweep_areas:
             _rg = rig_for(_a, _ar)
             _r = best_trim(sweep_twa_in.value, wind_states["Design"], maxheel_in.value, _rg)
             _row.append(dict(area=_a, ar=_ar, span=_rg["sail"]["b"], V=_r["V"] / KNOT, heel=_r["heel"], alpha=_r["alpha"]))
@@ -2565,8 +2565,8 @@ def _(
 
     _fig, _axs = plt.subplots(1, 2, figsize=(10, 3.4))
     for _ar, _row in sweep.items():
-        _axs[0].plot(_areas, [r["V"] for r in _row], "o-", label=rf"$AR = {_ar}$")
-        _axs[1].plot(_areas, [r["heel"] for r in _row], "o-", label=rf"$AR = {_ar}$")
+        _axs[0].plot(sweep_areas, [r["V"] for r in _row], "o-", label=rf"$AR = {_ar}$")
+        _axs[1].plot(sweep_areas, [r["heel"] for r in _row], "o-", label=rf"$AR = {_ar}$")
     _axs[0].axhline(v_req, color="k", ls=":", label="required")
     _axs[1].axhline(maxheel_in.value, color="r", ls="--", label="max heel")
     _axs[0].set(xlabel=r"Sail area ($\mathrm{m^2}$)", ylabel="Speed (kn)")
@@ -2590,7 +2590,7 @@ def _(
         _fig,
         mo.accordion({"All cases": mo.ui.table(_rows, selection=None, pagination=False)}),
     ])
-    return
+    return rig_for, sweep_areas, sweep_ars
 
 
 @app.cell(hide_code=True)
@@ -2782,6 +2782,120 @@ def _(
             kind="danger") if _over else mo.md(""),
     ])
     return rig_mass, skin_mass
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    ### Mast Sizing
+    For a given sail area and aspect ratio, the mast is a tube whose outside diameter is a fraction $f$ of the section thickness at the mast axis. A larger $f$ lets the wall come down, which saves mass, until the minimum wall governs and the mass starts to rise with the diameter again. A smaller $f$ is lighter but more flexible. The optimum is the $f$ with the lowest spar mass that keeps the survival tip deflection under the limit, taking the heavier of the design and survival cases. The sail, loads and material are those of the structural section, recomputed for each sail. Where no $f$ in the range meets the limit, the point is left out.
+    """)
+    return
+
+
+@app.cell
+def _(
+    KNOT,
+    alpha_in,
+    cn_lock_in,
+    dfrac_in,
+    draft,
+    emod_in,
+    mast_step,
+    requirements,
+    rho_air,
+    rho_mat_in,
+    rig_for,
+    sail_mast_in,
+    sail_tc_in,
+    sf_in,
+    sigma_in,
+    tmin_in,
+    v_req,
+    wind_at,
+    wind_states,
+    zref_in,
+):
+    def mast_opt(area, ar):
+        """Lightest mast for a sail of this area and aspect ratio that meets the survival deflection limit, or None."""
+        rg = rig_for(area, ar)
+        s, p = rg["sail"], rg["polar"]
+        z = np.linspace(0.0, s["b"], 120)
+        seg = np.diff(z)
+        chord = s["c_root"] + (s["c_tip"] - s["c_root"]) * z / s["b"]
+        a = np.asarray(p["alpha"])
+        cn = p["CL"] * np.cos(np.radians(a)) + p["CD"] * np.sin(np.radians(a))
+        cn_max = float(cn[(a >= 0) & (a <= 30)].max())
+        x = sail_mast_in.value
+        t_mast = 10 * sail_tc_in.value / 100 * (0.2969 * np.sqrt(x) - 0.1260 * x - 0.3516 * x**2 + 0.2843 * x**3 - 0.1036 * x**4)
+        z_wl = mast_step[2] - draft + z
+        moments = {}
+        for name, v_ref, c_n in (("Design", wind_states["Design"] + v_req * KNOT, cn_max), ("Survival", wind_states["Survival"], cn_lock_in.value)):
+            w = 0.5 * rho_air * wind_at(z_wl, v_ref, zref_in.value, alpha_in.value) ** 2 * c_n * chord
+            shear = np.r_[np.cumsum(((w[1:] + w[:-1]) / 2 * seg)[::-1])[::-1], 0.0]
+            moments[name] = np.r_[np.cumsum(((shear[1:] + shear[:-1]) / 2 * seg)[::-1])[::-1], 0.0]
+
+        def spar(f, moment):
+            D = f * t_mast * chord
+            t = np.maximum(4 * moment * sf_in.value / (np.pi * D**2 * sigma_in.value * 1e6), tmin_in.value * 1e-3)
+            k = moment / (emod_in.value * 1e9 * np.pi * D**3 * t / 8)
+            slope = np.r_[0.0, np.cumsum((k[1:] + k[:-1]) / 2 * seg)]
+            defl = np.r_[0.0, np.cumsum((slope[1:] + slope[:-1]) / 2 * seg)]
+            wall = np.pi * D * t
+            return dict(D=D[0], t=t[0], defl=defl[-1] / s["b"], mass=rho_mat_in.value * float(np.sum((wall[1:] + wall[:-1]) / 2 * seg)))
+
+        best = None
+        for f in np.linspace(dfrac_in.start, dfrac_in.stop, 71):
+            des, surv = spar(f, moments["Design"]), spar(f, moments["Survival"])
+            if surv["defl"] <= requirements.defl_limit.value and (best is None or max(des["mass"], surv["mass"]) < best["mass"]):
+                best = dict(f=f, mass=max(des["mass"], surv["mass"]), D=surv["D"], t=max(des["t"], surv["t"]), defl=surv["defl"], span=s["b"])
+        return best
+
+    return (mast_opt,)
+
+
+@app.cell
+def _(
+    dfrac_in,
+    mast_D,
+    mast_opt,
+    requirements,
+    sail,
+    struct,
+    sweep_areas,
+    sweep_ars,
+):
+    mast_sweep = {ar: [mast_opt(a, ar) for a in sweep_areas] for ar in sweep_ars}
+
+    _fig, _axs = plt.subplots(1, 3, figsize=(11, 3.4))
+    for _ar, _row in mast_sweep.items():
+        _lab = rf"$AR = {_ar}$"
+        _axs[0].plot(sweep_areas, [r["f"] if r else np.nan for r in _row], "o-", label=_lab)
+        _axs[1].plot(sweep_areas, [r["D"] * 1e3 if r else np.nan for r in _row], "o-", label=_lab)
+        _axs[2].plot(sweep_areas, [r["mass"] if r else np.nan for r in _row], "o-", label=_lab)
+    _axs[0].plot(sail["S"], dfrac_in.value, "k*", ms=10, label="current design")
+    _axs[1].plot(sail["S"], mast_D[0] * 1e3, "k*", ms=10, label="current design")
+    _axs[2].plot(sail["S"], max(s["spar"] for s in struct.values()), "k*", ms=10, label="current design")
+    _axs[0].set(xlabel=r"Sail area ($\mathrm{m^2}$)", ylabel=r"Diameter fraction $f$")
+    _axs[1].set(xlabel=r"Sail area ($\mathrm{m^2}$)", ylabel="Root outside diameter (mm)")
+    _axs[2].set(xlabel=r"Sail area ($\mathrm{m^2}$)", ylabel="Spar mass (kg)")
+    for _ax in _axs:
+        _ax.grid(alpha=0.3)
+    _axs[0].legend(fontsize=8)
+    _rows = [{
+        "AR": f"{_ar}", "Area (m^2)": f"{a:.2f}", "f": f"{r['f']:.2f}" if r else "none",
+        "Root OD (mm)": f"{r['D'] * 1e3:.1f}" if r else "", "Wall (mm)": f"{r['t'] * 1e3:.2f}" if r else "",
+        "Spar mass (kg)": f"{r['mass']:.3f}" if r else "", "Survival tip deflection": f"{r['defl']:.1%}" if r else "",
+    } for _ar, _row in mast_sweep.items() for a, r in zip(sweep_areas, _row)]
+    mo.vstack([
+        mo.md(
+            f"Lightest mast for each sail area that keeps the survival tip deflection under {requirements.defl_limit.value:.0%} of the span. "
+            f"The star is the current design ($f$ = {dfrac_in.value:.2f}, {sail['S']:.2f} $\mathrm{{m^2}}$)."
+        ),
+        _fig,
+        mo.accordion({"All cases": mo.ui.table(_rows, selection=None, pagination=False)}),
+    ])
+    return
 
 
 @app.cell

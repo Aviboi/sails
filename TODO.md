@@ -39,7 +39,7 @@ Still open:
 
 ## P4: Unfinished sections
 
-- **Sail sizing sweep does not recompute rig mass.** Spar and rig mass are only computed for the current sail, so check any other sail against the Structural Loads section.
+- **Sail sizing sweep does not recompute rig mass.** The speed sweep ignores it. The Mast Sizing section gives the lightest spar for each area, but skin and fixed mass are not added to the sweep.
 - **Gust response and motor torque limits** are not modelled in the drivetrain section.
 
 ## P5: Placeholder inputs to replace

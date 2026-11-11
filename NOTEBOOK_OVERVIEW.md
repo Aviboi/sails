@@ -111,7 +111,7 @@ Grouped by area, with a flag for whether later cells use them and whether they a
 - `rig0`, `make_rig`, `rm_val`, `heel_for`, `balance`, `best_trim`, `helm`: the core solver. `balance` includes hull windage (drag, side force, heeling moment).
 - **`sail_runs`**: Critical. It holds speed, heel and lead by TWA, and the summary reads it directly.
 - `taper_band`: the same sweeps at 0 m and 0.45 m transom fairing. The Design Summary shows the range beside the three speed rows.
-- `sweep` and `rig_for`: a trade study (area × AR) at one TWA. It does not recompute rig mass, is not used later, and informs the sail-size decision.
+- `sweep` (grid `sweep_areas`, `sweep_ars`) and `rig_for`: a trade study (area × AR) at one TWA. It does not recompute rig mass, is not used later, and informs the sail-size decision.
 
 ### Structure and drivetrain
 | Output | Used downstream | Critical |
@@ -120,6 +120,7 @@ Grouped by area, with a flag for whether later cells use them and whether they a
 | `rig_mass`, `skin_mass` | Drivetrain, all-up mass, summary | **Yes** |
 | `total_mass`, `cg_all`, `rm_peak_all`, `surv_moment` (hull + rig, GZ recomputed, survival moment with hull windage) | Summary survival row | **Yes** |
 | `mast_D`, `span_z` | Friction radius, plots | Medium |
+| `mast_opt`, `mast_sweep` (lightest mast meeting the survival deflection limit, by sail area × AR, on the same grid as `sweep_areas`/`sweep_ars`) | Not used later; informs the mast size (`dfrac_in`) | No |
 | `drive` (hold, peak and survival torque, motor torques, rpm, power) | Summary | **Yes** |
 
 ### Final outputs (all in the Design Summary)
@@ -138,7 +139,7 @@ There are 14 PASS / MARGINAL / FAIL checks. The three speed rows also show the 0
   - Draft, mass and displaced volume are consistent: `draft` is solved from `mass_in` (hull only) and shared by resistance, windage and stability.
   - The all-up cell adds the rig to the hull and recomputes the GZ curve and survival margin, but it is one-way. Resistance, the force balance and the structural loads keep the hull-only waterline and righting moment. If the rig mass becomes large, move the correction upstream.
   - `lcg_in` and `kg_in` are single placeholders for the hull.
-- **Cells that report values nothing else uses:** the freeboard table, `R_req`, and `sweep`.
+- **Cells that report values nothing else uses:** the freeboard table, `R_req`, `sweep` and `mast_sweep`.
 - **Weakest assumptions that drive critical outputs:**
   - `taper_in` (wave resistance; best speed at the minimum wind swings by about 1 kn across the fairing band).
   - `hull_cdf_in`, `hull_cds_in` (hull windage drag).
